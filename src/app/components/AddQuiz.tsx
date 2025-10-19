@@ -115,9 +115,6 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
   const [deadline, setDeadline] = useState<string>("");
   const [shuffle, setShuffle] = useState(false);
 
-  // NEW: publish state (Draft by default)
-  const [isPublished, setIsPublished] = useState<boolean>(false);
-
   // start with ONE question
   const [questions, setQuestions] = useState<QuestionDraft[]>([
     makeBlankQuestion(),
@@ -261,8 +258,8 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
         available_from: new Date().toISOString(),
         expires_at: deadline ? new Date(deadline).toISOString() : null,
         shuffle,
-        // NEW: take from the selector
-        is_published: isPublished,
+        // AUTO-PUBLISH: always set published = true
+        is_published: true,
         editable: true,
       };
       if (userId && isUuid(userId)) quizPayload.created_by = userId;
@@ -399,14 +396,7 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
       )}
 
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
-        <div className="mb-4 text-xs text-gray-500">
-          Module is selected from the URL. Configure title, type, attempts, deadline, and options.
-          {moduleOk && (
-            <span className="ml-2 rounded bg-gray-100 px-2 py-0.5 font-mono text-[10px] text-gray-600">
-              {moduleId}
-            </span>
-          )}
-        </div>
+        
 
         {/* Meta */}
         <div className="grid gap-4 md:grid-cols-2">
@@ -433,23 +423,6 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
               <option value="pre_test">Pre-Test</option>
               <option value="post_test">Post-Test</option>
             </select>
-          </label>
-
-          {/* NEW: Publish/Draft selector */}
-          <label className="flex flex-col gap-1">
-            <span className="text-sm font-medium text-gray-700">Visibility</span>
-            <select
-              value={isPublished ? "published" : "draft"}
-              onChange={(e) => setIsPublished(e.target.value === "published")}
-              className="rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
-              aria-label="Publish state"
-            >
-              <option value="draft">Draft (not published)</option>
-              <option value="published">Published (visible to students)</option>
-            </select>
-            <span className="mt-1 text-xs text-gray-500">
-              Draft keeps the quiz hidden. Published makes it visible (subject to availability dates).
-            </span>
           </label>
 
           <label className="flex flex-col gap-1">
