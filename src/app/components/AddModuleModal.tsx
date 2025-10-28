@@ -10,10 +10,11 @@ type ModuleRow = {
   description: string | null;
   quarter_id: string;
   created_at?: string;
-  thumbnail_url?: string | null; // <- include cover on the row
+  is_private: boolean;
+  thumbnail_url: string | null;
 };
 
-const MODULE_IMAGE_BUCKET = "module-images"; // keep using your existing bucket
+const MODULE_IMAGE_BUCKET = "module-images"; // change if you use a different bucket
 
 export default function AddModuleModal({
   quarterId,
@@ -27,6 +28,7 @@ export default function AddModuleModal({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [isPrivate, setIsPrivate] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -35,36 +37,23 @@ export default function AddModuleModal({
     inputRef.current?.focus();
   }, []);
 
-  /** Upload image and persist its URL directly on modules.thumbnail_url */
-  const uploadCoverAndPatchModule = async (moduleId: string): Promise<string | null> => {
+  // Upload the image (if any) and return its public URL
+  const uploadThumbnailIfAny = async (moduleId: string) => {
     if (!file) return null;
 
-    const ext = (file.name.split(".").pop() || "png").toLowerCase();
+    const ext = file.name.split(".").pop() || "png";
     const path = `${quarterId}/${moduleId}-${Date.now()}.${ext}`;
 
-    const up = await supabase.storage
+    const { error: uploadErr } = await supabase.storage
       .from(MODULE_IMAGE_BUCKET)
-      .upload(path, file, {
-        upsert: true,
-        cacheControl: "3600",
-        contentType: file.type || undefined,
-      });
+      .upload(path, file, { upsert: true });
+    if (uploadErr) throw uploadErr;
 
-    if (up.error) throw up.error;
+    const { data: publicUrl } = supabase.storage
+      .from(MODULE_IMAGE_BUCKET)
+      .getPublicUrl(path);
 
-    const { data: pub } = supabase.storage.from(MODULE_IMAGE_BUCKET).getPublicUrl(path);
-    const publicUrl = pub.publicUrl;
-
-    const { data: patched, error: patchErr } = await supabase
-      .from("modules")
-      .update({ thumbnail_url: publicUrl })
-      .eq("id", moduleId)
-      .select("id, title, description, quarter_id, created_at, thumbnail_url")
-      .single();
-
-    if (patchErr) throw patchErr;
-
-    return (patched?.thumbnail_url as string) ?? publicUrl;
+    return publicUrl.publicUrl as string;
   };
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -72,6 +61,7 @@ export default function AddModuleModal({
     if (loading) return;
 
     setErr(null);
+
     if (!title.trim()) {
       setErr("Module name is required.");
       return;
@@ -84,27 +74,56 @@ export default function AddModuleModal({
     try {
       setLoading(true);
 
+      // Create the module with chosen privacy
       const { data: mod, error } = await supabase
         .from("modules")
         .insert({
           quarter_id: quarterId,
           title: title.trim(),
           description: description.trim() || null,
+          is_private: isPrivate,
+          thumbnail_url: null, // will be updated if an image is provided
         })
-        .select("id, title, description, quarter_id, created_at, thumbnail_url")
+        .select(
+          "id, title, description, quarter_id, created_at, is_private, thumbnail_url"
+        )
         .single();
 
       if (error) throw error;
 
       let imageUrl: string | null = null;
+
+      // If teacher added a cover image, upload and then store URL in modules.thumbnail_url
       if (mod?.id && file) {
-        imageUrl = await uploadCoverAndPatchModule(mod.id);
+        imageUrl = await uploadThumbnailIfAny(mod.id);
+
+        const { data: updated, error: updErr } = await supabase
+          .from("modules")
+          .update({ thumbnail_url: imageUrl })
+          .eq("id", mod.id)
+          .select(
+            "id, title, description, quarter_id, created_at, is_private, thumbnail_url"
+          )
+          .single();
+
+        if (updErr) throw updErr;
+
+        // Use the updated row for the callback
+        onCreated(updated as ModuleRow, imageUrl);
+      } else {
+        // No image uploaded; use the inserted row
+        onCreated(mod as ModuleRow, null);
       }
 
-      onCreated(mod as ModuleRow, imageUrl);
       closeModal();
     } catch (e: any) {
-      setErr(e?.message ?? "Failed to add module.");
+      const msg =
+        (e?.message || "")
+          .toLowerCase()
+          .includes("row-level security")
+          ? "Blocked by database policy. Make sure you own this quarter and your RLS allows teachers to insert modules."
+          : e?.message ?? "Failed to add module.";
+      setErr(msg);
     } finally {
       setLoading(false);
     }
@@ -152,6 +171,33 @@ export default function AddModuleModal({
             placeholder="What will students learn in this module?"
             className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
           />
+
+          {/* Privacy switch */}
+          <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2.5">
+            <div className="min-w-0 pr-3">
+              <div className="text-sm font-medium text-slate-800">Private module</div>
+              <div className="text-xs text-slate-500">
+                Only selected students can access when enabled.
+              </div>
+            </div>
+            <label className="relative inline-flex cursor-pointer items-center">
+              <input
+                type="checkbox"
+                className="peer sr-only"
+                checked={isPrivate}
+                onChange={(e) => setIsPrivate(e.target.checked)}
+                aria-label="Toggle private module"
+              />
+              <span
+                className="h-6 w-11 rounded-full bg-slate-300 transition peer-checked:bg-indigo-600"
+                aria-hidden="true"
+              />
+              <span
+                className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition peer-checked:translate-x-5"
+                aria-hidden="true"
+              />
+            </label>
+          </div>
 
           <label className="mt-4 block text-sm font-medium text-slate-700">
             Cover image <span className="text-slate-400 font-normal">(optional)</span>

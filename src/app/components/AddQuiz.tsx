@@ -202,7 +202,10 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
     setQuestions((qs) =>
       qs.map((q, i) =>
         i === qi
-          ? { ...q, choices: q.choices.map((c, j) => ({ ...c, correct: j === ci })) }
+          ? {
+              ...q,
+              choices: q.choices.map((c, j) => ({ ...c, correct: j === ci })),
+            }
           : q
       )
     );
@@ -254,7 +257,8 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
         title: title.trim(),
         type,
         max_attempts: maxAttempts ?? 1,
-        time_limit_minutes: timeLimitMinutes === "" ? null : Number(timeLimitMinutes),
+        time_limit_minutes:
+          timeLimitMinutes === "" ? null : Number(timeLimitMinutes),
         available_from: new Date().toISOString(),
         expires_at: deadline ? new Date(deadline).toISOString() : null,
         shuffle,
@@ -265,7 +269,9 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
       if (userId && isUuid(userId)) quizPayload.created_by = userId;
 
       {
-        const { error: quizErr } = await supabase.from("quizzes").insert([quizPayload]);
+        const { error: quizErr } = await supabase
+          .from("quizzes")
+          .insert([quizPayload]);
         if (quizErr) throw new Error(formatPgError(quizErr));
       }
 
@@ -287,7 +293,9 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
               contentType: draft.imageFile.type || "image/*",
             });
           if (up.error) throw new Error(formatPgError(up.error));
-          const { data: pub } = supabase.storage.from(QUIZ_IMAGE_BUCKET).getPublicUrl(path);
+          const { data: pub } = supabase.storage
+            .from(QUIZ_IMAGE_BUCKET)
+            .getPublicUrl(path);
           imageUrls = [pub.publicUrl];
         }
 
@@ -327,7 +335,9 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
         }));
 
         {
-          const { error: cErr } = await supabase.from("quiz_choices").insert(choicesRows);
+          const { error: cErr } = await supabase
+            .from("quiz_choices")
+            .insert(choicesRows);
           if (cErr) throw new Error(formatPgError(cErr));
         }
       }
@@ -350,7 +360,7 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
 
   /* ------------------------------ UI --------------------------------- */
   return (
-    <div className="mx-auto max-w-5xl relative">
+    <div className="mx-auto max-w-5xl relative px-3 sm:px-4">
       {/* Success toast */}
       {successMsg && (
         <div
@@ -364,59 +374,66 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
         </div>
       )}
 
-      <header className="mb-4 flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-gray-900">Add Quiz</h1>
-        <button
-          onClick={() => router.back()}
-          className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-gray-50"
-          aria-label="Go back"
-        >
-          <ArrowUturnLeftIcon className="h-5 w-5" />
-          Back
-        </button>
+      {/* Top toolbar (sticky + overlap-proof grid) */}
+      <header className="sticky top-0 z-30 -mx-3 sm:-mx-4 mb-4 border-b bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/70">
+        <div className="px-3 sm:px-4 py-3 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+          <h1 className="min-w-0 truncate text-base sm:text-lg font-semibold text-gray-900">
+            Add Quiz
+          </h1>
+          <button
+            onClick={() => router.back()}
+            className="justify-self-end whitespace-nowrap w-full sm:w-auto inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-gray-50"
+            aria-label="Go back"
+          >
+            <ArrowUturnLeftIcon className="h-5 w-5" />
+            Back
+          </button>
+        </div>
       </header>
 
       {!moduleOk && (
-        <div className="mb-4 flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          <ShieldExclamationIcon className="h-5 w-5" />
-          Module ID is missing/invalid. Open Add Quiz from a module page.
+        <div className="mb-4 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <ShieldExclamationIcon className="h-5 w-5 shrink-0" />
+          <span className="min-w-0">
+            Module ID is missing/invalid. Open Add Quiz from a module page.
+          </span>
         </div>
       )}
       {ownershipOK === false && (
-        <div className="mb-4 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          <ShieldExclamationIcon className="h-5 w-5" />
-          You don’t have permission to add a quiz to this module.
+        <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <ShieldExclamationIcon className="h-5 w-5 shrink-0" />
+          <span className="min-w-0">
+            You don’t have permission to add a quiz to this module.
+          </span>
         </div>
       )}
       {error && (
-        <div className="mb-4 flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          <XMarkIcon className="h-5 w-5" />
-          {error}
+        <div className="mb-4 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <XMarkIcon className="h-5 w-5 shrink-0" />
+          <span className="min-w-0">{error}</span>
         </div>
       )}
 
-      <div className="rounded-2xl border bg-white p-5 shadow-sm">
-        
-
+      <div className="rounded-2xl border bg-white p-4 sm:p-5 shadow-sm">
         {/* Meta */}
         <div className="grid gap-4 md:grid-cols-2">
-          <label className="flex flex-col gap-1">
+          <label className="flex flex-col gap-1 min-w-0">
             <span className="text-sm font-medium text-gray-700">Title</span>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
+              className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
               placeholder="e.g., Pre-Test: Context Clues"
               aria-label="Quiz title"
             />
           </label>
 
-          <label className="flex flex-col gap-1">
+          <label className="flex flex-col gap-1 min-w-0">
             <span className="text-sm font-medium text-gray-700">Type</span>
             <select
               value={type}
               onChange={(e) => setType(e.target.value as QuizType)}
-              className="rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
+              className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
               aria-label="Quiz type"
             >
               <option value="quiz">Quiz</option>
@@ -425,49 +442,59 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
             </select>
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-sm font-medium text-gray-700">Max Attempts</span>
+          <label className="flex flex-col gap-1 min-w-0">
+            <span className="text-sm font-medium text-gray-700">
+              Max Attempts
+            </span>
             <input
               type="number"
               min={1}
               value={maxAttempts}
-              onChange={(e) => setMaxAttempts(Math.max(1, Number(e.target.value)))}
-              className="rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
+              onChange={(e) =>
+                setMaxAttempts(Math.max(1, Number(e.target.value)))
+              }
+              className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
               aria-label="Max attempts"
             />
           </label>
 
-          <label className="flex flex-col gap-1">
+          <label className="flex flex-col gap-1 min-w-0">
             <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
-              <ClockIcon className="h-4 w-4" /> Time Limit (minutes) <span className="text-gray-400">(optional)</span>
+              <ClockIcon className="h-4 w-4" /> Time Limit (minutes){" "}
+              <span className="text-gray-400">(optional)</span>
             </span>
             <input
               type="number"
               min={1}
               value={timeLimitMinutes}
               onChange={(e) =>
-                setTimeLimitMinutes(e.target.value === "" ? "" : Math.max(1, Number(e.target.value)))
+                setTimeLimitMinutes(
+                  e.target.value === ""
+                    ? ""
+                    : Math.max(1, Number(e.target.value))
+                )
               }
-              className="rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
+              className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
               placeholder="optional"
               aria-label="Time limit in minutes"
             />
           </label>
 
-          <label className="flex flex-col gap-1 md:col-span-2">
+          <label className="flex flex-col gap-1 md:col-span-2 min-w-0">
             <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
-              <CalendarIcon className="h-4 w-4" /> Deadline <span className="text-gray-400">(optional)</span>
+              <CalendarIcon className="h-4 w-4" /> Deadline{" "}
+              <span className="text-gray-400">(optional)</span>
             </span>
             <input
               type="datetime-local"
               value={deadline}
               onChange={(e) => setDeadline(e.target.value)}
-              className="rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
+              className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
               aria-label="Deadline"
             />
           </label>
 
-          <label className="flex items-center gap-2 md:col-span-2">
+          <label className="flex items-center gap-2 md:col-span-2 min-w-0">
             <input
               type="checkbox"
               checked={shuffle}
@@ -476,7 +503,8 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
               aria-label="Shuffle"
             />
             <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
-              <AdjustmentsHorizontalIcon className="h-4 w-4" /> Shuffle questions and choices
+              <AdjustmentsHorizontalIcon className="h-4 w-4" /> Shuffle
+              questions and choices
             </span>
           </label>
         </div>
@@ -487,11 +515,13 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
         <ol className="space-y-6">
           {questions.map((q, idx) => (
             <li key={idx} className="rounded-2xl border p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <span className="text-sm font-medium text-gray-600">Question {idx + 1}</span>
+              <div className="mb-3 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+                <span className="min-w-0 truncate text-sm font-medium text-gray-600">
+                  Question {idx + 1}
+                </span>
                 <button
                   onClick={() => removeQuestion(idx)}
-                  className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
+                  className="justify-self-end inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap w-full sm:w-auto"
                   disabled={questions.length <= 1}
                   aria-label={`Remove question ${idx + 1}`}
                 >
@@ -501,18 +531,22 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
               </div>
 
               <div className="grid gap-3 md:grid-cols-2">
-                <label className="flex flex-col gap-1 md:col-span-2">
-                  <span className="text-sm font-medium text-gray-700">Question Text</span>
+                <label className="flex flex-col gap-1 md:col-span-2 min-w-0">
+                  <span className="text-sm font-medium text-gray-700">
+                    Question Text
+                  </span>
                   <textarea
                     value={q.question_text}
                     onChange={(e) =>
                       setQuestions((qs) =>
                         qs.map((qq, i) =>
-                          i === idx ? { ...qq, question_text: e.target.value } : qq
+                          i === idx
+                            ? { ...qq, question_text: e.target.value }
+                            : qq
                         )
                       )
                     }
-                    className="min-h-[72px] rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
+                    className="min-h-[72px] w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
                     placeholder="Type the question…"
                     aria-label={`Question ${idx + 1} text`}
                   />
@@ -527,7 +561,9 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
                       onChange={(e) =>
                         setQuestions((qs) =>
                           qs.map((qq, i) =>
-                            i === idx ? { ...qq, underline_enabled: e.target.checked } : qq
+                            i === idx
+                              ? { ...qq, underline_enabled: e.target.checked }
+                              : qq
                           )
                         )
                       }
@@ -539,17 +575,19 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
                   </label>
 
                   {q.underline_enabled && (
-                    <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto] md:items-center">
+                    <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                       <input
                         value={q.underline_text ?? ""}
                         onChange={(e) =>
                           setQuestions((qs) =>
                             qs.map((qq, i) =>
-                              i === idx ? { ...qq, underline_text: e.target.value } : qq
+                              i === idx
+                                ? { ...qq, underline_text: e.target.value }
+                                : qq
                             )
                           )
                         }
-                        className="rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
+                        className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
                         placeholder="Type the word/phrase to underline (must appear in the question)"
                         aria-label={`Question ${idx + 1} underline phrase`}
                       />
@@ -561,20 +599,26 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
                             setQuestions((qs) =>
                               qs.map((qq, i) =>
                                 i === idx
-                                  ? { ...qq, underline_case_sensitive: e.target.checked }
+                                  ? {
+                                      ...qq,
+                                      underline_case_sensitive:
+                                        e.target.checked,
+                                    }
                                   : qq
                               )
                             )
                           }
                           className="h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-900/20"
                         />
-                        <span className="text-xs text-gray-700">Case sensitive</span>
+                        <span className="text-xs text-gray-700">
+                          Case sensitive
+                        </span>
                       </label>
 
                       {/* Live preview */}
                       <div className="md:col-span-2 text-sm text-gray-600 mt-2">
                         <div className="mb-1 font-medium">Live Preview:</div>
-                        <div className="rounded-md border bg-gray-50 px-3 py-2">
+                        <div className="rounded-md border bg-gray-50 px-3 py-2 min-w-0">
                           <UnderlinePreview
                             text={q.question_text}
                             phrase={q.underline_text ?? ""}
@@ -596,8 +640,10 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
                   )}
                 </div>
 
-                <label className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-gray-700">Points</span>
+                <label className="flex flex-col gap-1 min-w-0">
+                  <span className="text-sm font-medium text-gray-700">
+                    Points
+                  </span>
                   <input
                     type="number"
                     min={1}
@@ -606,36 +652,44 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
                       setQuestions((qs) =>
                         qs.map((qq, i) =>
                           i === idx
-                            ? { ...qq, points: Math.max(1, Number(e.target.value)) }
+                            ? {
+                                ...qq,
+                                points: Math.max(1, Number(e.target.value)),
+                              }
                             : qq
                         )
                       )
                     }
-                    className="rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
+                    className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
                     aria-label={`Question ${idx + 1} points`}
                   />
                 </label>
 
-                <label className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-gray-700">Instruction (optional)</span>
+                <label className="flex flex-col gap-1 min-w-0">
+                  <span className="text-sm font-medium text-gray-700">
+                    Instruction (optional)
+                  </span>
                   <textarea
                     value={q.instruction_text}
                     onChange={(e) =>
                       setQuestions((qs) =>
                         qs.map((qq, i) =>
-                          i === idx ? { ...qq, instruction_text: e.target.value } : qq
+                          i === idx
+                            ? { ...qq, instruction_text: e.target.value }
+                            : qq
                         )
                       )
                     }
-                    className="min-h-[44px] rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
+                    className="min-h-[44px] w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
                     placeholder="Add directions, context, or a passage…"
                     aria-label={`Question ${idx + 1} instruction`}
                   />
                 </label>
 
-                <label className="flex flex-col gap-1">
+                <label className="flex flex-col gap-1 min-w-0">
                   <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                    <PhotoIcon className="h-4 w-4" /> Instruction Image (optional, 1)
+                    <PhotoIcon className="h-4 w-4" /> Instruction Image
+                    (optional, 1)
                   </span>
                   <input
                     type="file"
@@ -643,10 +697,12 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
                     onChange={(e) => {
                       const file = e.target.files?.[0] ?? null;
                       setQuestions((qs) =>
-                        qs.map((qq, i) => (i === idx ? { ...qq, imageFile: file } : qq))
+                        qs.map((qq, i) =>
+                          i === idx ? { ...qq, imageFile: file } : qq
+                        )
                       );
                     }}
-                    className="rounded-lg border px-3 py-2 file:mr-4 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-2"
+                    className="w-full rounded-lg border px-3 py-2 file:mr-4 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:truncate"
                     aria-label={`Question ${idx + 1} image`}
                   />
                 </label>
@@ -659,14 +715,19 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
                 </div>
                 <ul className="space-y-2">
                   {q.choices.map((c, j) => (
-                    <li key={j} className="flex items-center gap-2">
+                    <li
+                      key={j}
+                      className="flex items-start sm:items-center gap-2 min-w-0"
+                    >
                       <input
                         type="radio"
                         name={`correct_${idx}`}
                         checked={c.correct}
                         onChange={() => setCorrect(idx, j)}
-                        className="h-4 w-4"
-                        aria-label={`Mark choice ${j + 1} as correct for question ${idx + 1}`}
+                        className="h-4 w-4 shrink-0 mt-2 sm:mt-0"
+                        aria-label={`Mark choice ${j + 1} as correct for question ${
+                          idx + 1
+                        }`}
                       />
                       <input
                         value={c.text}
@@ -677,7 +738,9 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
                                 ? {
                                     ...qq,
                                     choices: qq.choices.map((cc, jj) =>
-                                      jj === j ? { ...cc, text: e.target.value } : cc
+                                      jj === j
+                                        ? { ...cc, text: e.target.value }
+                                        : cc
                                     ),
                                   }
                                 : qq
@@ -685,12 +748,12 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
                           )
                         }
                         placeholder="Choice text"
-                        className="flex-1 rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
+                        className="flex-1 min-w-0 rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900/10"
                         aria-label={`Choice ${j + 1} text for question ${idx + 1}`}
                       />
                       <button
                         onClick={() => removeChoice(idx, j)}
-                        className="rounded-lg p-1 hover:bg-gray-50"
+                        className="shrink-0 rounded-lg p-1 hover:bg-gray-50"
                         aria-label={`Remove choice ${j + 1}`}
                         title="Remove"
                       >
@@ -703,7 +766,7 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
                 <div className="mt-3">
                   <button
                     onClick={() => addChoice(idx)}
-                    className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-xs ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
+                    className="w-full sm:w-auto whitespace-nowrap inline-flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-xs ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
                     aria-label={`Add choice to question ${idx + 1}`}
                   >
                     <PlusIcon className="h-4 w-4" />
@@ -719,7 +782,7 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
         <div className="mt-4 flex justify-center">
           <button
             onClick={addQuestion}
-            className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm text-gray-800 ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
+            className="w-full sm:w-auto whitespace-nowrap inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm text-gray-800 ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
             aria-label="Add question"
           >
             <PlusIcon className="h-5 w-5" />
@@ -727,15 +790,15 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
           </button>
         </div>
 
-        {/* Footer */}
-        <div className="mt-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="text-xs text-gray-500">
+        {/* Footer (non-overlapping, responsive actions) */}
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:auto-cols-max sm:grid-flow-col items-center justify-between">
+          <div className="text-xs text-gray-500 min-w-0">
             Each question needs 2+ choices and exactly 1 marked correct.
           </div>
           <button
             disabled={!canSubmit || saving}
             onClick={handleSubmit}
-            className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-white hover:opacity-95 disabled:opacity-50 focus:ring-2 focus:ring-slate-900/20 whitespace-nowrap w-full sm:w-auto"
+            className="w-full sm:w-auto whitespace-nowrap inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-white hover:opacity-95 disabled:opacity-50 focus:ring-2 focus:ring-slate-900/20"
             aria-label="Save quiz"
           >
             <CheckCircleIcon className="h-5 w-5" />
@@ -743,6 +806,9 @@ export default function AddQuiz({ moduleId }: { moduleId: string }) {
           </button>
         </div>
       </div>
+
+      {/* extra padding so bottom toolbars never feel cramped on mobile safe areas */}
+      <div className="h-6 sm:h-8" />
     </div>
   );
 }

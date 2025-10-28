@@ -12,6 +12,7 @@ import {
   ExclamationTriangleIcon,
   PencilSquareIcon,
   MagnifyingGlassIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/react/24/outline";
 import type {
   AssignmentDataset,
@@ -493,6 +494,137 @@ export default function ReviewAndGradePane() {
     return typeof v === "number" && Number.isFinite(v) ? v : 100;
   }, [assignmentMeta]);
 
+  /* ----------------------------- CSV export ------------------------------ */
+
+  // Safe label lookups (use any to avoid TS errors if shape differs)
+  const findQuarterName = (id: string) =>
+    quarters.find((q) => String(q.id) === String(id))?.name ?? "";
+
+  const findModuleName = (id: string) => {
+    const m = modules.find((m) => String((m as any).id) === String(id));
+    if (!m) return "";
+    // some codebases use 'title' and others 'name' — try both safely
+    return (m as any).title ?? (m as any).name ?? "";
+  };
+
+  const findAssignmentName = (id: string) => {
+    const a = assignments.find((a) => String((a as any).id) === String(id));
+    if (!a) return assignmentMeta?.name ?? "";
+    return (a as any).name ?? (a as any).title ?? assignmentMeta?.name ?? "";
+  };
+
+  const exportSubmittedCsv = () => {
+    // Build CSV rows from submittedList (respect current filters)
+    const rows = submittedList.map(({ sub, student }) => {
+      const fullName = `${student.last_name ?? ""}, ${student.first_name ?? ""}`;
+      const section = sectionNameFor(student);
+      const quarterLabel = findQuarterName(quarterId) || "";
+      const moduleLabel = findModuleName(moduleId) || "";
+      const assignmentLabel = findAssignmentName(assignmentId) || "";
+      const score = sub.grade == null ? "" : String(sub.grade);
+      const feedback = (sub as any).feedback ?? "";
+      return {
+        name: fullName,
+        section,
+        quarter: quarterLabel,
+        module: moduleLabel,
+        assignment: assignmentLabel,
+        score,
+        feedback,
+      };
+    });
+
+    // header
+    const header = ["Name", "Section", "Quarter", "Module", "Assignment", "Score", "Feedback"];
+    // escape CSV fields
+    const escapeCell = (v: string) =>
+      `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const csv =
+      header.join(",") +
+      "\n" +
+      rows
+        .map((r) =>
+          [
+            escapeCell(r.name),
+            escapeCell(r.section),
+            escapeCell(r.quarter),
+            escapeCell(r.module),
+            escapeCell(r.assignment),
+            escapeCell(r.score),
+            escapeCell(r.feedback),
+          ].join(",")
+        )
+        .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const filenameBase = (assignmentMeta?.name ?? "assignment")
+      .replace(/\s+/g, "-")
+      .replace(/[^\w\-]/g, "");
+    const filename = `${filenameBase || "assignment"}-submissions.csv`;
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportNotSubmittedCsv = () => {
+    // Build CSV rows from notSubmittedList (respect current filters)
+    const rows = notSubmittedList.map((student) => {
+      const fullName = `${student.last_name ?? ""}, ${student.first_name ?? ""}`;
+      const section = sectionNameFor(student);
+      const quarterLabel = findQuarterName(quarterId) || "";
+      const moduleLabel = findModuleName(moduleId) || "";
+      const assignmentLabel = findAssignmentName(assignmentId) || "";
+      return {
+        name: fullName,
+        section,
+        quarter: quarterLabel,
+        module: moduleLabel,
+        assignment: assignmentLabel,
+        status: "Not submitted",
+      };
+    });
+
+    const header = ["Name", "Section", "Quarter", "Module", "Assignment", "Status"];
+    const escapeCell = (v: string) =>
+      `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const csv =
+      header.join(",") +
+      "\n" +
+      rows
+        .map((r) =>
+          [
+            escapeCell(r.name),
+            escapeCell(r.section),
+            escapeCell(r.quarter),
+            escapeCell(r.module),
+            escapeCell(r.assignment),
+            escapeCell(r.status),
+          ].join(",")
+        )
+        .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const filenameBase = (assignmentMeta?.name ?? "assignment")
+      .replace(/\s+/g, "-")
+      .replace(/[^\w\-]/g, "");
+    const filename = `${filenameBase || "assignment"}-not-submitted.csv`;
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   /* ---------------------------------- UI ----------------------------------- */
   return (
     <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm min-h-[480px]">
@@ -562,8 +694,19 @@ export default function ReviewAndGradePane() {
               icon={<ClipboardDocumentCheckIcon className="w-5 h-5" />}
               count={submittedList.length}
               emptyText="No submissions yet."
-              /* 👇 keep filters/search visible even when empty */
+              /* keep filters/search visible even when empty */
               showChildrenWhenEmpty
+              headerAction={
+                <button
+                  onClick={exportSubmittedCsv}
+                  className="inline-flex items-center gap-2 rounded-md border px-2 py-1 text-xs hover:bg-neutral-50"
+                  title="Export CSV"
+                  aria-label="Export submitted list to CSV"
+                >
+                  <ArrowDownTrayIcon className="h-4 w-4" />
+                  <span className="hidden sm:inline">Export CSV</span>
+                </button>
+              }
             >
               <SectionAndSearch
                 sections={sectionOptions}
@@ -646,6 +789,19 @@ export default function ReviewAndGradePane() {
               icon={<FunnelIcon className="w-5 h-5" />}
               count={notSubmittedList.length}
               emptyText="All students have submitted."
+              /* ✅ keep filters visible even when count is 0 */
+              showChildrenWhenEmpty
+              headerAction={
+                <button
+                  onClick={exportNotSubmittedCsv}
+                  className="inline-flex items-center gap-2 rounded-md border px-2 py-1 text-xs hover:bg-neutral-50"
+                  title="Export CSV"
+                  aria-label="Export not-submitted list to CSV"
+                >
+                  <ArrowDownTrayIcon className="h-4 w-4" />
+                  <span className="hidden sm:inline">Export CSV</span>
+                </button>
+              }
             >
               {/* Only section filter (search removed) */}
               <div className="mb-3 grid grid-cols-1">
@@ -1010,7 +1166,8 @@ function ListCard({
   count,
   emptyText,
   children,
-  showChildrenWhenEmpty = false, // 👈 new optional flag
+  showChildrenWhenEmpty = false,
+  headerAction,
 }: {
   title: string;
   icon: React.ReactNode;
@@ -1018,6 +1175,7 @@ function ListCard({
   emptyText: string;
   children: React.ReactNode;
   showChildrenWhenEmpty?: boolean;
+  headerAction?: React.ReactNode;
 }) {
   return (
     <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm p-3 min-w-0">
@@ -1031,6 +1189,7 @@ function ListCard({
             <div className="text-xs text-neutral-500">{count} item(s)</div>
           </div>
         </div>
+        <div>{headerAction ?? null}</div>
       </div>
       {count === 0 ? (
         <>

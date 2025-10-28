@@ -152,13 +152,26 @@ export default function StudentOverviewPane({ student }: Props) {
       setLoading(true);
       setError(null);
       try {
-        // resolve moduleIds for current filters
-        let moduleIds = (modules ?? [])
-          .filter((m) => (filters.moduleId === "all" ? true : m.id === filters.moduleId))
-          .map((m) => m.id);
+        // Resolve moduleIds for current filters (robust & deterministic)
+        let moduleIds: string[] = [];
 
-        if (filters.quarterId === "all" && moduleIds.length === 0) {
-          const { data: allMods } = await supabase.from("modules").select("id");
+        if (filters.moduleId !== "all") {
+          // specific module selected → only that module
+          moduleIds = [filters.moduleId];
+        } else if (filters.quarterId !== "all") {
+          // quarter selected, but no specific module → fetch module ids in that quarter
+          const { data: modsInQuarter, error: modsErr } = await supabase
+            .from("modules")
+            .select("id")
+            .eq("quarter_id", filters.quarterId);
+          if (modsErr) throw modsErr;
+          moduleIds = (modsInQuarter ?? []).map((m: any) => m.id);
+        } else {
+          // all quarters → fetch all module ids
+          const { data: allMods, error: allErr } = await supabase
+            .from("modules")
+            .select("id");
+          if (allErr) throw allErr;
           moduleIds = (allMods ?? []).map((m: any) => m.id);
         }
 
@@ -375,8 +388,9 @@ export default function StudentOverviewPane({ student }: Props) {
 
   return (
     <div className="rounded-2xl border border-neutral-200 bg-white p-4 sm:p-6 shadow-sm h-full overflow-hidden">
-      {/* Header: Student + filters */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {/* Header: Student name on its own row, filters below */}
+      <div className="mb-4">
+        {/* Name + section (top row) */}
         <div className="min-w-0">
           <div className="text-xl font-semibold text-neutral-900 truncate">
             {studentLabel}
@@ -384,7 +398,8 @@ export default function StudentOverviewPane({ student }: Props) {
           <div className="text-sm text-neutral-500">Section: {sectionLabel}</div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Filters (separate row) */}
+        <div className="mt-3 flex flex-wrap items-center gap-2 justify-start lg:justify-end">
           <div className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2">
             <AdjustmentsHorizontalIcon className="w-4 h-4 text-neutral-600" />
             <span className="text-xs text-neutral-600">Filters</span>

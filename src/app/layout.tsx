@@ -13,6 +13,9 @@ import { supabase } from "@/lib/supabase";
 import ClientOnly from "@/app/components/ClientOnly";
 import "./globals.css";
 
+/* 🔔 NEW: bell UI */
+import NotificationBell from "@/app/components/notifications/NotificationBell";
+
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
   variable: "--font-geist-sans",
@@ -198,6 +201,9 @@ function LayoutShell({ children }: { children: React.ReactNode }) {
           {/* User badge + avatar */}
           {showSidebar && isLoggedIn && (
             <div className="ml-auto flex items-center gap-2">
+              {/* 🔔 NEW: show notifications only for Teacher & Student */}
+              {(ctxRole === "teacher" || ctxRole === "student") && <NotificationBell />}
+
               <Link
                 href={profileHref}
                 className="flex items-center gap-3 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition"

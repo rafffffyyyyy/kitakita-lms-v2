@@ -78,11 +78,11 @@ function parseGrammarResponse(raw: string) {
 
   let original = extractBetween(unwrapped, RE_ORIG, RE_ERRS) ?? "";
   let issues =
-    extractBetween(unwrapped, RE_ERRS, RE_CORR) ??
-    extractBetween(unwrapped, RE_ERRS, RE_TIP_LABEL) ??
+    extractBetween(unwrapped, RE_ERRS, RE_CORR) ?? 
+    extractBetween(unwrapped, RE_ERRS, RE_TIP_LABEL) ?? 
     extractBetween(unwrapped, RE_ERRS) ?? "";
   let corrected =
-    extractBetween(unwrapped, RE_CORR, RE_TIP_LABEL) ??
+    extractBetween(unwrapped, RE_CORR, RE_TIP_LABEL) ?? 
     extractBetween(unwrapped, RE_CORR) ?? "";
   let tips = extractBetween(unwrapped, RE_TIP_LABEL) ?? "";
 
@@ -134,9 +134,20 @@ async function uploadAndReturnPath(path: string, file: File) {
   return data?.path ?? path;
 }
 async function toViewUrl(bucketPath: string, expiresSeconds = 3600) {
-  const { data, error } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(bucketPath, expiresSeconds);
-  if (!error && data?.signedUrl) return data.signedUrl;
-  return supabase.storage.from(STORAGE_BUCKET).getPublicUrl(bucketPath).data.publicUrl;
+  try {
+    const { data, error } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(bucketPath, expiresSeconds);
+    if (!error && data?.signedUrl) return data.signedUrl;
+  } catch (e) {
+    console.error("[toViewUrl] createSignedUrl failed:", e);
+  }
+  // fallback to public url (may be empty if bucket is private)
+  try {
+    const pub = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(bucketPath);
+    return pub?.data?.publicUrl ?? null;
+  } catch (e) {
+    console.error("[toViewUrl] getPublicUrl failed:", e);
+    return null;
+  }
 }
 
 /* ------------------------------- TYPES --------------------------- */
@@ -230,10 +241,41 @@ export default function AssignmentView({
   const [subsByStudent, setSubsByStudent] = useState<Record<string, SubmissionRow | undefined>>({});
   const [loadingRoster, setLoadingRoster] = useState(false);
 
+  // ⭐ NEW: student's latest submission state
+  const [mySubmission, setMySubmission] = useState<SubmissionRow | null>(null);
+  const [mySubmissionUrl, setMySubmissionUrl] = useState<string | null>(null);
+  const [myFileExtLower, setMyFileExtLower] = useState<string>("");
+
   /* Load assignment + preview file + module */
   useEffect(() => {
     (async () => {
       setErr(null);
+
+      // Ensure client is authenticated before attempting to read assignment_files (RLS requires auth)
+      try {
+        const { data: authData } = await supabase.auth.getUser();
+        const userId = authData?.user?.id ?? null;
+        if (!userId) {
+          // If the client isn't signed in, the RLS SELECT will be blocked and you'll get no rows.
+          console.debug("[AssignmentView] client unauthenticated - cannot read protected rows");
+          setErr("Please sign in to view attached files.");
+          // Still attempt to load assignment record (if you want assignment visible to anon, keep below)
+          const { data: a, error: e1 } = await supabase
+            .from("assignments")
+            .select("*")
+            .eq("id", assignmentId)
+            .single();
+          if (e1 || !a) { setErr(e1?.message ?? "Assignment not found."); return; }
+          setAssignment(a as unknown as Assignment);
+          // do not proceed to fetch assignment_files when unauthenticated
+          setFileMeta(null);
+          setPreviewUrl(null);
+          return;
+        }
+      } catch (e) {
+        console.error("[AssignmentView] auth.getUser failed:", e);
+        // proceed - we'll still try to fetch assignment, but surface issues
+      }
 
       const { data: a, error: e1 } = await supabase
         .from("assignments")
@@ -254,26 +296,98 @@ export default function AssignmentView({
         if (m) setModule(m as ModuleRow);
       }
 
-      const { data: af } = await supabase
-        .from("assignment_files")
-        .select("id, assignment_id, file_url, file_name, created_at, Name")
-        .eq("assignment_id", assignmentId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      // fetch latest assignment file row
+      try {
+        const { data: af, error: e3 } = await supabase
+          .from("assignment_files")
+          .select("id, assignment_id, file_url, file_name, created_at,file_name")
+          .eq("assignment_id", assignmentId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      if (af) {
-        const row = af as AssignmentFile;
-        setFileMeta(row);
-        if (row.file_url) {
-          const url = await toViewUrl(row.file_url);
-          setPreviewUrl(url);
+        console.debug("[AssignmentView] assignment_files query:", { assignmentId, af, e3 });
+
+        if (e3) {
+            // Better error introspection:
+            try {
+              console.error("[AssignmentView] assignment_files error raw:", e3);
+              // Try to stringify anything useful
+              console.error("[AssignmentView] assignment_files error JSON:", JSON.stringify(e3));
+            } catch (stringifyErr) {
+              console.error("[AssignmentView] error stringifying e3:", stringifyErr);
+            }
+
+            // SDK sometimes returns minimal object; try to extract common fields
+            const pretty = (msgObj: any) => {
+              if (!msgObj) return null;
+              return msgObj.message ?? msgObj.error ?? msgObj.msg ?? msgObj.details ?? msgObj.hint ?? JSON.stringify(msgObj);
+            };
+
+            const userVisible = pretty(e3) || "Unknown error from server (check Network tab for request/response).";
+            setErr(`Failed to load attached file: ${userVisible}`);
+            setFileMeta(null);
+            setPreviewUrl(null);
+            return;
+      }
+
+        if (af) {
+          const row = af as AssignmentFile;
+          setFileMeta(row);
+
+          if (row.file_url) {
+            // try to create a preview URL (signed or public)
+            try {
+              const url = await toViewUrl(row.file_url);
+              console.debug("[AssignmentView] toViewUrl result:", { file_url: row.file_url, preview: url });
+              if (url) {
+                setPreviewUrl(url);
+                setErr(null);
+              } else {
+                // fallbacks: maybe the DB stored a full http URL, or public url is empty
+                if (row.file_url.startsWith("http")) {
+                  setPreviewUrl(row.file_url);
+                  setErr(null);
+                } else {
+                  // attempt explicit getPublicUrl and surface error if none
+                  try {
+                    const pub = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(row.file_url);
+                    const publicUrl = pub?.data?.publicUrl ?? null;
+                    console.debug("[AssignmentView] explicit getPublicUrl:", { publicUrl, pub });
+                    if (publicUrl) {
+                      setPreviewUrl(publicUrl);
+                      setErr(null);
+                    } else {
+                      setPreviewUrl(null);
+                      setErr("Attached file exists but could not generate a preview URL.");
+                    }
+                  } catch (e) {
+                    console.error("[AssignmentView] getPublicUrl failed:", e);
+                    setPreviewUrl(null);
+                    setErr("Attached file exists but could not generate a preview URL.");
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("[AssignmentView] toViewUrl execution failed:", e);
+              setPreviewUrl(null);
+              setErr("Failed to generate file preview URL.");
+            }
+          } else {
+            setPreviewUrl(null);
+            setErr(null);
+          }
         } else {
+          setFileMeta(null);
           setPreviewUrl(null);
+          // no attached file found
+          setErr(null);
         }
-      } else {
+      } catch (e) {
+        console.error("[AssignmentView] unexpected error fetching assignment_files:", e);
         setFileMeta(null);
         setPreviewUrl(null);
+        setErr("Unexpected error while loading attached file.");
       }
     })();
   }, [assignmentId, moduleIdProp]);
@@ -317,6 +431,51 @@ export default function AssignmentView({
         }
       } catch {
         // ignore
+      }
+    })();
+  }, [isStudent, assignmentId]);
+
+  /* ⭐ NEW: Student – load latest submission (full row + preview URL) */
+  useEffect(() => {
+    if (!isStudent || !assignmentId) return;
+
+    (async () => {
+      try {
+        const { data: auth } = await supabase.auth.getUser();
+        const uid = auth.user?.id;
+        if (!uid) { setMySubmission(null); setMySubmissionUrl(null); setMyFileExtLower(""); return; }
+
+        const { data: last, error } = await supabase
+          .from("assignment_submissions")
+          .select("id, assignment_id, student_id, file_url, answer_text, submitted_at")
+          .eq("assignment_id", assignmentId)
+          .eq("student_id", uid)
+          .order("submitted_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (error || !last) {
+          setMySubmission(null);
+          setMySubmissionUrl(null);
+          setMyFileExtLower("");
+          return;
+        }
+
+        setMySubmission(last as SubmissionRow);
+
+        const rawPath = (last as any).file_url as string | null;
+        if (rawPath) {
+          const url = await toViewUrl(rawPath);
+          setMySubmissionUrl(url ?? (rawPath.startsWith("http") ? rawPath : null));
+          setMyFileExtLower(fileExt(rawPath).toLowerCase());
+        } else {
+          setMySubmissionUrl(null);
+          setMyFileExtLower("");
+        }
+      } catch {
+        setMySubmission(null);
+        setMySubmissionUrl(null);
+        setMyFileExtLower("");
       }
     })();
   }, [isStudent, assignmentId]);
@@ -462,6 +621,49 @@ export default function AssignmentView({
       >
         <EyeIcon className="h-4 w-4" aria-hidden="true" />
         Open file
+      </a>
+    );
+  };
+
+  // ⭐ NEW: viewer for the student's latest submission file
+  const renderMySubmissionViewer = () => {
+    if (!mySubmissionUrl) {
+      return null;
+    }
+
+    if (myFileExtLower === "pdf") {
+      return (
+        <object data={mySubmissionUrl} type="application/pdf" className="h-80 w-full rounded-lg border">
+          <iframe title="Submission PDF preview" src={mySubmissionUrl} className="h-80 w-full rounded-lg border" />
+        </object>
+      );
+    }
+
+    if (["png", "jpg", "jpeg", "gif", "webp"].includes(myFileExtLower)) {
+      return (
+        <img
+          src={mySubmissionUrl}
+          alt="Your submission file"
+          className="h-auto max-h-80 w-full rounded-lg border object-contain"
+        />
+      );
+    }
+
+    if (["doc", "docx", "ppt", "pptx", "xls", "xlsx"].includes(myFileExtLower)) {
+      const gview = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(mySubmissionUrl)}`;
+      return <iframe title="Your submission (Office)" src={gview} className="h-80 w-full rounded-lg border" allowFullScreen />;
+    }
+
+    return (
+      <a
+        href={mySubmissionUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+        title="Open your submitted file in a new tab"
+      >
+        <EyeIcon className="h-4 w-4" aria-hidden="true" />
+        Open submitted file
       </a>
     );
   };
@@ -630,6 +832,31 @@ export default function AssignmentView({
           .eq("student_id", studentId);
         setAttemptsUsed(cnt ?? attemptsUsed);
       } catch {}
+
+      // ⭐ NEW: refresh student's latest submission after successful submit
+      try {
+        const { data: last } = await supabase
+          .from("assignment_submissions")
+          .select("id, assignment_id, student_id, file_url, answer_text, submitted_at")
+          .eq("assignment_id", assignment.id)
+          .eq("student_id", studentId)
+          .order("submitted_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (last) {
+          setMySubmission(last as SubmissionRow);
+          const rawPath = (last as any).file_url as string | null;
+          if (rawPath) {
+            const url = await toViewUrl(rawPath);
+            setMySubmissionUrl(url ?? (rawPath.startsWith("http") ? rawPath : null));
+            setMyFileExtLower(fileExt(rawPath).toLowerCase());
+          } else {
+            setMySubmissionUrl(null);
+            setMyFileExtLower("");
+          }
+        }
+      } catch {}
     } catch (e: any) {
       const msg = e?.message || e?.error_description || e?.error || "Submit failed.";
       console.error("SUBMIT_ERROR:", e);
@@ -755,7 +982,7 @@ export default function AssignmentView({
                       title={!windowState.isOpen ? (windowState.reason || "Submission closed") : (attemptsReached ? "No attempts remaining" : "Submit your answer")}
                     >
                       <CheckCircleIcon className="h-5 w-5" aria-hidden="true" />
-                      {submitting ? "Submitting…" : attemptsReached ? "No attempts left" : "Submit"}
+                      {submitting ? "Submitting…" : "Submit Assignment"}
                     </button>
                   </div>
                 </form>
@@ -814,6 +1041,34 @@ export default function AssignmentView({
                     <textarea value={tipsText} readOnly className="h-36 w-full resize-none rounded-lg bg-slate-50 p-2 text-sm outline-none" placeholder="No tips yet." aria-label="AI tips" />
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* ⭐ NEW: Latest Submission (Student) */}
+            {isStudent && (
+              <div className="rounded-2xl ring-1 ring-slate-200 bg-white p-4 shadow-sm mb-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <DocumentTextIcon className="h-5 w-5" aria-hidden="true" />
+                  <h2 className="text-sm font-semibold">Latest Submission</h2>
+                </div>
+
+                {!mySubmission ? (
+                  <div className="text-sm text-slate-500">You haven’t submitted anything yet.</div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="text-xs text-slate-500">
+                      Submitted: {fmtDateTime(mySubmission.submitted_at)}
+                    </div>
+
+                    {mySubmission.answer_text?.trim() ? (
+                      <div className="rounded-lg border bg-slate-50 p-3 text-sm whitespace-pre-wrap">
+                        {mySubmission.answer_text}
+                      </div>
+                    ) : null}
+
+                    {renderMySubmissionViewer()}
+                  </div>
+                )}
               </div>
             )}
 

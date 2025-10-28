@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import AdminAddStudentModal from "@/app/components/admin/AdminAddStudentModal";
 import AdminEditTeacherModal, {
@@ -21,6 +21,7 @@ import {
   AcademicCapIcon,
   UserGroupIcon,
   PencilSquareIcon,
+  ChevronDownIcon,
 } from "@heroicons/react/24/outline";
 
 /* ----------------------------- Types ----------------------------- */
@@ -31,7 +32,7 @@ type TeacherRow = {
   middle_name: string | null;
   last_name: string | null;
   created_at: string | null;
-  profile_picture_url: string | null; // <-- added
+  profile_picture_url: string | null;
 };
 
 type SectionRow = { id: number; name: string };
@@ -47,10 +48,9 @@ type StudentRow = {
   teacher_id: string | null;
   section_id: number | null;
   created_at: string | null;
-  profile_picture_url: string | null; // <-- added
+  profile_picture_url: string | null;
 };
 
-/** Shape expected by UpdateStudentModal */
 type ModalStudent = {
   id: string;
   first_name: string;
@@ -73,7 +73,7 @@ const initials = (full?: string) => {
   if (!s) return "??";
   const parts = s.split(/\s+/);
   const first = parts[0]?.[0] ?? "";
-  const last = parts.length > 1 ? parts[parts.length - 1][0] ?? "" : (parts[0]?.[1] ?? "");
+  const last = parts.length > 1 ? parts[parts.length - 1][0] ?? "" : parts[0]?.[1] ?? "";
   return (first + last).toUpperCase();
 };
 
@@ -86,7 +86,7 @@ export default function AdminDashboard() {
   const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
   const [password, setPassword] = useState("");
-  const [showTeacherPw, setShowTeacherPw] = useState(false); // <-- added
+  const [showTeacherPw, setShowTeacherPw] = useState(false);
 
   /* ----------------------------- UI state ----------------------------- */
   const [busy, setBusy] = useState(false);
@@ -169,7 +169,7 @@ export default function AdminDashboard() {
       const { data, error } = await supabase
         .from("teachers")
         .select(
-          "id, created_at, email, first_name, middle_name, last_name, admin_id, profile_picture_url" // <-- added
+          "id, created_at, email, first_name, middle_name, last_name, admin_id, profile_picture_url"
         )
         .eq("admin_id", adminKey)
         .order("created_at", { ascending: false });
@@ -187,7 +187,7 @@ export default function AdminDashboard() {
         first_name: row.first_name ?? null,
         middle_name: row.middle_name ?? null,
         last_name: row.last_name ?? null,
-        profile_picture_url: row.profile_picture_url ?? null, // <-- added
+        profile_picture_url: row.profile_picture_url ?? null,
       }));
 
       setTeachers(normalized);
@@ -214,7 +214,7 @@ export default function AdminDashboard() {
     let query = supabase
       .from("students")
       .select(
-        "id, first_name, middle_name, last_name, lrn, username, password, teacher_id, section_id, created_at, profile_picture_url" // <-- added
+        "id, first_name, middle_name, last_name, lrn, username, password, teacher_id, section_id, created_at, profile_picture_url"
       )
       .order("created_at", { ascending: false });
 
@@ -445,13 +445,13 @@ export default function AdminDashboard() {
                   id="t-pass"
                   className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pr-16 text-sm outline-none ring-blue-500 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2"
                   placeholder="Minimum 8 chars, letters & numbers"
-                  type={showTeacherPw ? "text" : "password"}  // <-- toggles
+                  type={showTeacherPw ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   autoComplete="new-password"
                 />
-                {/* Show/Hide button (absolute inside Field's relative wrapper) */}
+                {/* Show/Hide button */}
                 <button
                   type="button"
                   onClick={() => setShowTeacherPw((v) => !v)}
@@ -628,48 +628,42 @@ export default function AdminDashboard() {
           {/* Toolbar */}
           <div className="px-5 py-4">
             <div className="mb-4 grid items-center grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[16rem,16rem,1fr,auto]">
-              {/* Teacher filter */}
+              {/* Teacher filter (custom dropdown) */}
               <div className="relative">
                 <label htmlFor="filter-teacher" className="sr-only">
                   Teacher
                 </label>
                 <AcademicCapIcon className="pointer-events-none absolute left-3 top-2.5 h-5 w-5 text-slate-400" />
-                <select
+
+                <CustomSelect
                   id="filter-teacher"
+                  options={[{ value: "", label: "All teachers" }, ...teachers.map((t) => ({ value: t.id, label: teacherName(t.id) }))]}
                   value={filterTeacher}
-                  onChange={(e) => setFilterTeacher(e.target.value)}
-                  className="h-10 w-full appearance-none rounded-lg border border-slate-300 bg-white px-3 py-2 pl-10 text-sm outline-none ring-blue-500 focus:border-blue-500 focus:ring-2"
-                  title="Filter by Teacher"
-                >
-                  <option value="">All teachers</option>
-                  {teachers.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {teacherName(t.id)}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="All teachers"
+                  onChange={(v) => {
+                    // keep same shape as previous: setFilterTeacher expects string
+                    setFilterTeacher(v);
+                  }}
+                />
               </div>
 
-              {/* Section filter */}
+              {/* Section filter (custom dropdown) */}
               <div className="relative">
                 <label htmlFor="filter-section" className="sr-only">
                   Section
                 </label>
                 <AcademicCapIcon className="pointer-events-none absolute left-3 top-2.5 h-5 w-5 text-slate-400" />
-                <select
+
+                <CustomSelect
                   id="filter-section"
-                  value={filterSection}
-                  onChange={(e) => setFilterSection(e.target.value ? Number(e.target.value) : "")}
-                  className="h-10 w-full appearance-none rounded-lg border border-slate-300 bg-white px-3 py-2 pl-10 text-sm outline-none ring-blue-500 focus:border-blue-500 focus:ring-2"
-                  title="Filter by Section"
-                >
-                  <option value="">All sections</option>
-                  {sections.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
+                  options={[{ value: "", label: "All sections" }, ...sections.map((s) => ({ value: String(s.id), label: s.name }))]}
+                  value={filterSection === "" ? "" : String(filterSection)}
+                  placeholder="All sections"
+                  onChange={(v) => {
+                    // replicate previous behavior: setFilterSection accepts number or ""
+                    setFilterSection(v ? Number(v) : "");
+                  }}
+                />
               </div>
 
               {/* Search (fluid) */}
@@ -823,6 +817,182 @@ export default function AdminDashboard() {
 }
 
 /* --------------------------------- UI bits --------------------------------- */
+
+/**
+ * CustomSelect
+ *
+ * - options: {value: string, label: string}[]
+ * - value: string
+ * - onChange: (value:string) => void
+ *
+ * Accessible: uses button to toggle, role=listbox, role=option; supports keyboard navigation
+ * Arrow rotates when open; independent instance state.
+ */
+function CustomSelect({
+  id,
+  options,
+  value,
+  onChange,
+  placeholder,
+}: {
+  id?: string;
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState<number>(-1);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  // ensure active index sync when value changes
+  useEffect(() => {
+    const idx = options.findIndex((o) => o.value === value);
+    setActiveIndex(idx);
+  }, [value, options]);
+
+  // close on outside click
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  // keyboard handling
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setOpen(true);
+      setActiveIndex((prev) => {
+        const next = prev + 1;
+        return next >= options.length ? 0 : next;
+      });
+      // ensure list visible
+      requestAnimationFrame(() => {
+        const el = listRef.current?.querySelector(`[data-index="${activeIndex + 1}"]`) as HTMLElement | null;
+        el?.scrollIntoView({ block: "nearest" });
+      });
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setOpen(true);
+      setActiveIndex((prev) => {
+        const next = prev - 1;
+        return next < 0 ? options.length - 1 : next;
+      });
+      requestAnimationFrame(() => {
+        const el = listRef.current?.querySelector(`[data-index="${activeIndex - 1}"]`) as HTMLElement | null;
+        el?.scrollIntoView({ block: "nearest" });
+      });
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (open) {
+        const idx = activeIndex >= 0 ? activeIndex : options.findIndex((o) => o.value === value);
+        const opt = options[idx];
+        if (opt) {
+          onChange(opt.value);
+        }
+        setOpen(false);
+      } else {
+        setOpen(true);
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+    }
+  };
+
+  const handleToggle = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    setOpen((s) => !s);
+    // if opening, focus first selected item
+    if (!open) {
+      requestAnimationFrame(() => {
+        const idx = options.findIndex((o) => o.value === value);
+        setActiveIndex(idx >= 0 ? idx : 0);
+        const el = listRef.current?.querySelector(`[data-index="${idx >= 0 ? idx : 0}"]`) as HTMLElement | null;
+        el?.focus();
+      });
+    }
+  };
+
+  const displayLabel = options.find((o) => o.value === value)?.label ?? placeholder ?? "";
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        id={id}
+        ref={buttonRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={handleToggle}
+        onKeyDown={onKeyDown}
+        className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pl-10 pr-10 text-left text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30"
+      >
+        <span className="flex items-center gap-2">
+          <span className="truncate">{displayLabel}</span>
+          <span className="ml-auto -mr-1 flex items-center">
+            <ChevronDownIcon
+              className={`h-4 w-4 transition-transform duration-200 transform ${open ? "rotate-180" : "rotate-0"}`}
+            />
+          </span>
+        </span>
+      </button>
+
+      {open && (
+        <div
+          ref={listRef}
+          role="listbox"
+          tabIndex={-1}
+          aria-activedescendant={activeIndex >= 0 ? `${id}-opt-${activeIndex}` : undefined}
+          className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-md border border-slate-200 bg-white shadow-lg focus:outline-none"
+          onKeyDown={onKeyDown}
+        >
+          {options.map((opt, idx) => {
+            const selected = opt.value === value;
+            const active = idx === activeIndex;
+            return (
+              <div
+                id={`${id}-opt-${idx}`}
+                key={opt.value + "-" + idx}
+                data-index={idx}
+                role="option"
+                aria-selected={selected}
+                tabIndex={0}
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                  // return focus to button for accessibility
+                  requestAnimationFrame(() => buttonRef.current?.focus());
+                }}
+                onMouseEnter={() => setActiveIndex(idx)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    onChange(opt.value);
+                    setOpen(false);
+                    requestAnimationFrame(() => buttonRef.current?.focus());
+                  }
+                }}
+                className={`cursor-pointer px-3 py-2 text-sm ${selected ? "font-medium text-slate-900" : "text-slate-700"} ${active ? "bg-slate-100" : ""}`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="truncate">{opt.label}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function Field({
   label,

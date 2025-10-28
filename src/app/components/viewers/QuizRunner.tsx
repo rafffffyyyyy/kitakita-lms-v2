@@ -297,7 +297,7 @@ export default function QuizRunner({
   const forceAutoSubmit = () => {
     if (autoSubmittingRef.current || submitting) return;
     autoSubmittingRef.current = true;
-    submitAttempt(true);
+    submitAttempt({ auto: true });
   };
 
   const setupTimer = (limitSeconds: number) => {
@@ -448,15 +448,18 @@ export default function QuizRunner({
     }
   };
 
-  const submitAttempt = async (auto = false) => {
+  const submitAttempt = async (opts?: { auto?: boolean; cancelled?: boolean }) => {
     if (!attemptId || submitting) return;
+
+    const auto = !!opts?.auto;
+    const cancelled = !!opts?.cancelled;
 
     setSubmitting(true);
     try {
       const score = computeScore();
       const startedAt = startedAtRef.current ?? new Date();
       const dur = Math.max(1, Math.floor((Date.now() - startedAt.getTime()) / 1000));
-      const payloadMeta = { answers, autoSubmitted: auto };
+      const payloadMeta = { answers, autoSubmitted: auto, cancelled };
 
       const { error: upErr } = await supabase
         .from("quiz_attempts")
@@ -592,14 +595,6 @@ export default function QuizRunner({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 whitespace-nowrap">
-        {started && timeBadge()}
-        {onBack && (
-          <button onClick={onBack} className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
-            <ArrowUturnLeftIcon className="h-4 w-4" /> Back
-          </button>
-        )}
-      </div>
     </div>
   );
 
@@ -622,6 +617,89 @@ export default function QuizRunner({
         </div>
       </div>
     );
+
+  // NEW: Cancel confirmation modal — cancel submits current answers & counts as attempt
+  const [showCancel, setShowCancel] = useState(false);
+  const CancelConfirmModal = () =>
+    !showCancel
+      ? null
+      : (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancel-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !submitting) setShowCancel(false);
+          }}
+        >
+          <div className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div className="inline-flex items-center gap-2">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-rose-600/10">
+                  <ArrowUturnLeftIcon className="h-5 w-5 text-rose-600" />
+                </span>
+                <h3 id="cancel-title" className="text-base font-semibold text-slate-900">
+                  Cancel attempt?
+                </h3>
+              </div>
+              <button
+                onClick={() => !submitting && setShowCancel(false)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                aria-label="Close"
+                disabled={submitting}
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 text-sm text-slate-700">
+              <p>
+                If you cancel now, your <b>current answers will be submitted</b> and this will
+                <b> count as an attempt</b>. You can’t undo this.
+              </p>
+              <div className="mt-3 text-xs text-slate-500">
+                {secondsLeft !== null ? (
+                  <>Time remaining: {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")}.</>
+                ) : (
+                  <>No time limit.</>
+                )}
+              </div>
+
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  onClick={() => !submitting && setShowCancel(false)}
+                  className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  disabled={submitting}
+                >
+                  Keep working
+                </button>
+                <button
+                  onClick={async () => {
+                    // Submit as a "cancel" (records score & counts attempt)
+                    await submitAttempt({ cancelled: true });
+                    setShowCancel(false);
+                  }}
+                  disabled={submitting}
+                  className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-60"
+                >
+                  {submitting ? (
+                    <>
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      Submitting…
+                    </>
+                  ) : (
+                    <>
+                      <ArrowUturnLeftIcon className="h-4 w-4" />
+                      Submit & Exit
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
 
   const Lightbox = () =>
     !lightbox ? null : (
@@ -869,7 +947,7 @@ export default function QuizRunner({
         className="mt-6 space-y-6"
         onSubmit={(e) => {
           e.preventDefault();
-          submitAttempt(false);
+          submitAttempt({ auto: false });
         }}
       >
         {questions.map((q, idx) => {
@@ -921,15 +999,9 @@ export default function QuizRunner({
           </button>
           <button
             type="button"
-            onClick={() => {
-              if (confirm("End attempt without submitting? Your answers will be lost.")) {
-                clearRunningTimers();
-                setStarted(false);
-                setAttemptId(null);
-                setAnswers({});
-              }
-            }}
+            onClick={() => setShowCancel(true)}
             className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg border px-4 py-2 text-sm hover:bg-slate-50"
+            disabled={submitting}
           >
             <XMarkIcon className="h-4 w-4" />
             Cancel
@@ -937,6 +1009,7 @@ export default function QuizRunner({
         </div>
       </form>
 
+      <CancelConfirmModal />
       <SuccessModal />
       <Lightbox />
     </div>

@@ -214,7 +214,6 @@ export default function UnifiedProfilePage() {
 
     setLoadingPass(true);
     try {
-      // pick an email for re-auth
       const { data: ures } = await supabase.auth.getUser();
       let email: string | null =
         (ures?.user?.email as string | null) ??
@@ -229,42 +228,32 @@ export default function UnifiedProfilePage() {
         return;
       }
 
-      // 1) verify CURRENT password
       const reauth = await supabase.auth.signInWithPassword({ email, password: curr });
       if (reauth.error || !reauth.data?.session) {
         flash("error", friendlyAuthError(reauth.error || "Invalid login credentials"));
         return;
       }
 
-      // 2) fire the update
       const updatePromise = supabase.auth.updateUser({ password: next });
 
-      // 3) optimistic success after 10s if still pending
       let settled = false;
       const optimistic = (async () => {
-        await delay(10_000);                 // <-- 10 seconds
+        await delay(10_000);
         if (settled) return { kind: "noop" };
-        // optimistic success UI
         setPasswords({ current: "", new: "", confirm: "" });
         flash("success", "Password changed successfully!");
         setLoadingPass(false);
-
-        // background verification: try to sign in with NEW password
         (async () => {
           try {
             const v = await supabase.auth.signInWithPassword({ email: email!, password: next });
             if (v.error || !v.data?.session) {
-              // if verification fails, inform the user
               flash(
                 "error",
                 "We couldn't verify the change yet. If you cannot sign in with the new password, try again."
               );
             }
-          } catch {
-            // swallow – we already showed success
-          }
+          } catch {}
         })();
-
         return { kind: "optimistic" as const };
       })();
 
@@ -275,17 +264,13 @@ export default function UnifiedProfilePage() {
       })();
 
       const raced: any = await Promise.race([real, optimistic]);
-
-      // If optimistic already handled the UI, stop here.
       if (raced?.kind === "optimistic" || raced?.kind === "noop") return;
 
-      // Otherwise, handle the real result normally.
       if (raced?.error) {
         flash("error", friendlyAuthError(raced.error));
         return;
       }
 
-      // success (resolved fast)
       setPasswords({ current: "", new: "", confirm: "" });
       flash("success", "Password changed successfully!");
     } catch (e: any) {
@@ -319,12 +304,12 @@ export default function UnifiedProfilePage() {
       )}
 
       {/* Header */}
-      <div className="mx-auto max-w-6xl px-4 pt-6">
+      <div className="mx-auto max-w-6xl px-3 sm:px-4 pt-6">
         <div className="flex items-center gap-3">
           <BackButton />
           <div className="ml-2 flex items-center gap-2">
             <UserCircleIcon className="h-6 w-6 text-slate-700" />
-            <h1 className="text-lg font-semibold text-slate-800">
+            <h1 className="text-base sm:text-lg font-semibold text-slate-800">
               {role === "admin" ? "Admin" : role === "teacher" ? "Teacher" : "Student"} Profile
             </h1>
           </div>
@@ -332,19 +317,17 @@ export default function UnifiedProfilePage() {
       </div>
 
       {/* Body */}
-      <div className="mx-auto max-w-6xl px-4 py-6">
+      <div className="mx-auto max-w-6xl px-3 sm:px-4 py-6">
         {!loaded ? (
-          <div className="min-h-[60vh] grid place-items-center">
-            <div className="animate-pulse text-slate-500">Loading profile…</div>
-          </div>
+          <SkeletonProfile />
         ) : (
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             {/* LEFT: avatar + quick facts */}
             <aside className="lg:col-span-1">
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
                 <div className="flex flex-col items-center">
                   <div className="relative">
-                    <div className="h-36 w-36 overflow-hidden rounded-2xl ring-1 ring-slate-200 bg-slate-100">
+                    <div className="h-28 w-28 sm:h-36 sm:w-36 overflow-hidden rounded-2xl ring-1 ring-slate-200 bg-slate-100">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={preview || profilePicture || "/default-avatar.png"}
@@ -354,7 +337,7 @@ export default function UnifiedProfilePage() {
                     </div>
                     <button
                       onClick={() => setShowUpload(true)}
-                      className="group absolute -bottom-2 -right-2 inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-slate-800"
+                      className="group absolute -bottom-2 -right-2 inline-flex items-center gap-2 rounded-full bg-slate-900 px-2.5 py-1.5 text-[11px] sm:text-xs font-medium text-white shadow-sm hover:bg-slate-800"
                     >
                       <CameraIcon className="h-4 w-4" />
                       Change
@@ -385,32 +368,8 @@ export default function UnifiedProfilePage() {
                           </span>
                         }
                         value={adminOrTeacher.email || "—"}
+                       
                       />
-                    )}
-
-                    {profileLink && (role === "teacher" || role === "student") && (
-                      <div className="rounded-xl bg-slate-50 ring-1 ring-slate-200 p-2.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="inline-flex items-center gap-2 text-slate-600">
-                            <LinkIcon className="h-5 w-5" />
-                            <span>Profile link</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => copy(profileLink)}
-                            className="whitespace-nowrap rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-100"
-                            title="Copy link"
-                          >
-                            <span className="inline-flex items-center gap-1">
-                              <ClipboardIcon className="h-4 w-4" />
-                              Copy
-                            </span>
-                          </button>
-                        </div>
-                        <div className="mt-1 truncate text-[11px] text-slate-500" title={profileLink}>
-                          {profileLink}
-                        </div>
-                      </div>
                     )}
                   </div>
                 </div>
@@ -420,19 +379,26 @@ export default function UnifiedProfilePage() {
             {/* RIGHT: details + password */}
             <section className="lg:col-span-2 space-y-6">
               {/* Personal Information */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
                 <h2 className="mb-4 text-base font-semibold text-slate-800">Personal Information</h2>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                   <Field label="First Name" value={(role === "student" ? student?.first_name : adminOrTeacher?.first_name) || ""} />
                   <Field label="Last Name" value={(role === "student" ? student?.last_name : adminOrTeacher?.last_name) || ""} />
                   <Field label="Middle Name" value={(role === "student" ? student?.middle_name : adminOrTeacher?.middle_name) || ""} />
-                  {role !== "student" && <Field label="Email" value={adminOrTeacher?.email || ""} />}
+                  {role !== "student" && (
+                    <Field
+                      label="Email"
+                      value={adminOrTeacher?.email || ""}
+                      copyable={!!adminOrTeacher?.email}
+                      onCopy={() => adminOrTeacher?.email && copy(adminOrTeacher.email)}
+                    />
+                  )}
                   <Field label="Role" value={role ? role[0].toUpperCase() + role.slice(1) : ""} />
                 </div>
               </div>
 
               {/* Change Password */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
                 <div className="mb-4 flex items-center gap-2">
                   <KeyIcon className="h-5 w-5 text-slate-600" />
                   <h2 className="text-base font-semibold text-slate-800">Change Password</h2>
@@ -560,28 +526,77 @@ export default function UnifiedProfilePage() {
 }
 
 /* ------------------------- small UI helpers ------------------------- */
-function Field({ label, value }: { label: string; value: string }) {
+function Field({
+  label,
+  value,
+  copyable,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  copyable?: boolean;
+  onCopy?: () => void;
+}) {
   return (
     <label className="block min-w-0">
       <span className="mb-1 block text-xs font-medium text-slate-600">{label}</span>
-      <input
-        type="text"
-        value={value}
-        disabled
-        readOnly
-        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-100"
-      />
+      <div className="relative">
+        <input
+          type="text"
+          value={value}
+          disabled
+          readOnly
+          className={`
+            w-full rounded-lg border border-slate-200 px-3 py-2
+            ${copyable ? "pr-12" : ""}
+            text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-100
+          `}
+        />
+        {copyable && !!value && (
+          <button
+            type="button"
+            onClick={onCopy}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            aria-label="Copy"
+            title="Copy to clipboard"
+          >
+            <ClipboardIcon className="h-4 w-4" />
+          </button>
+        )}
+      </div>
     </label>
   );
 }
 
-function Row({ label, value }: { label: React.ReactNode; value: string }) {
+/** Row: two-column grid, optional copy button for long values like emails */
+function Row({
+  label,
+  value,
+  copyable,
+  onCopy,
+}: {
+  label: React.ReactNode;
+  value: string;
+  copyable?: boolean;
+  onCopy?: () => void;
+}) {
   return (
-    <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+    <div className="grid grid-cols-[auto,1fr] items-center gap-3 rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
       <span className="inline-flex items-center gap-2 text-slate-600">{label}</span>
-      <span className="font-medium text-slate-900 truncate max-w-[55%]" title={value}>
-        {value}
-      </span>
+      <div className="min-w-0 flex items-center gap-2">
+        <span className="font-medium text-slate-900 break-words whitespace-pre-wrap">{value || "—"}</span>
+        {copyable && !!value && (
+          <button
+            type="button"
+            onClick={onCopy}
+            className="shrink-0 rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            aria-label="Copy"
+            title="Copy to clipboard"
+          >
+            <ClipboardIcon className="h-4 w-4" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -619,6 +634,50 @@ function Toast({
         >
           <XMarkIcon className="h-4 w-4" />
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------ Skeleton ------------------------------ */
+function SkeletonProfile() {
+  return (
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      {/* Left card */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
+        <div className="flex flex-col items-center">
+          <div className="h-28 w-28 sm:h-36 sm:w-36 rounded-2xl bg-slate-200 animate-pulse" />
+          <div className="mt-5 grid w-full gap-3">
+            {[1, 2].map((k) => (
+              <div key={k} className="h-10 rounded-xl bg-slate-100 animate-pulse ring-1 ring-slate-200" />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Right: personal info + password */}
+      <div className="lg:col-span-2 space-y-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
+          <div className="h-5 w-40 rounded bg-slate-200 animate-pulse" />
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="space-y-2">
+                <div className="h-3 w-24 rounded bg-slate-200 animate-pulse" />
+                <div className="h-10 rounded-lg bg-slate-100 animate-pulse" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
+          <div className="h-5 w-44 rounded bg-slate-200 animate-pulse" />
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-10 rounded-lg bg-slate-100 animate-pulse" />
+            ))}
+          </div>
+          <div className="mt-4 h-9 w-40 rounded-xl bg-slate-200 animate-pulse" />
+        </div>
       </div>
     </div>
   );

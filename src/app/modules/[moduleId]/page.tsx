@@ -471,8 +471,10 @@ export default function ModulePage() {
 
   /* ----------------------------- UI ------------------------------ */
   return (
-    <div className="min-h-screen bg-slate-50 flex">
-      {/* LEFT: Sidebar */}
+    // UI-only: add bottom padding on small screens so the fixed mobile bottom nav (in ModuleSidebar)
+    // never overlaps page content.
+    <div className="min-h-screen bg-slate-50 flex md:pb-0 pb-[calc(env(safe-area-inset-bottom,0px)+64px)]">
+      {/* LEFT: Sidebar (desktop/tablet visible; mobile hidden inside the component) */}
       <ModuleSidebar
         isSidebarOpen={isSidebarOpen}
         onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -503,14 +505,14 @@ export default function ModulePage() {
       />
 
       {/* RIGHT: Header + Inline Viewer */}
-      <div className="flex-1 p-6 pr-8 flex flex-col gap-6 min-w-0">
+      <div className="flex-1 min-w-0 px-4 md:px-6 lg:pr-8 py-6 flex flex-col gap-6">
         {/* Header */}
         <div className="min-w-0">
           {loading ? <HeaderSkeleton /> : module && <ModuleHeader title={module.title} />}
         </div>
 
         {/* Viewer */}
-        <div className="flex-1 min-h-[480px] min-w-0">
+        <div className="flex-1 min-h-[480px] min-w-0 mb-20 md:mb-0">
           {loading ? (
             <ViewerSkeleton />
           ) : assignmentView ? (

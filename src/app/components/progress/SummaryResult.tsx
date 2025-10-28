@@ -4,14 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useUser } from "@/app/UserContext";
 import {
-  AdjustmentsHorizontalIcon,
-  ArrowPathIcon,
   ChartBarSquareIcon,
   CheckCircleIcon,
   DocumentChartBarIcon,
   ExclamationTriangleIcon,
   InformationCircleIcon,
   UsersIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/react/24/outline";
 
 /* ----------------------------- Types ----------------------------- */
@@ -440,17 +439,104 @@ export default function SummaryResult() {
     return res;
   }, [questions, choicesByQ, answeredSet]);
 
+  /* -------------------------- CSV Export Helpers -------------------------- */
+
+  const csvEscape = (v: any) => {
+    if (v == null) return "";
+    const s = String(v);
+    // Escape quotes and enclose in quotes if needed
+    if (s.includes(",") || s.includes("\n") || s.includes('"')) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+
+  const exportResultsCSV = () => {
+    // Build header (includes Section now)
+    const headers = ["Student Name", "Section", "Quarter", "Module", "Quiz Title", "Score"];
+    const rows: string[] = [];
+    rows.push(headers.join(","));
+
+    // Determine names
+    const quarterName = quarters.find((q) => q.id === quarterId)?.name ?? "";
+    const moduleTitle = modules.find((m) => m.id === moduleId)?.title ?? "";
+    const quizTitle = selectedQuiz?.title ?? "";
+
+    // Use same filtering as roster (sectionFilter)
+    const filteredRoster = sectionFilter === "all" ? roster : roster.filter((s) => s.section_id === sectionFilter);
+
+    filteredRoster.forEach((s) => {
+      const attempt = attemptsByStudent[s.id];
+      const score = attempt && attempt.submitted_at ? String(attempt.score ?? "") : "";
+      const r = [
+        csvEscape(fmtName(s)),
+        csvEscape(s.section_name ?? ""),
+        csvEscape(quarterName),
+        csvEscape(moduleTitle),
+        csvEscape(quizTitle),
+        csvEscape(score),
+      ];
+      rows.push(r.join(","));
+    });
+
+    const csv = rows.join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${quizTitle || "quiz-results"}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportItemAnalysisCSV = () => {
+    // Header: QuestionNumber, QuestionText, ChoiceText, IsCorrect, PickedCount, CorrectTotal, WrongTotal
+    const headers = ["QuestionNumber", "QuestionText", "ChoiceText", "IsCorrect", "PickedCount", "CorrectTotal", "WrongTotal"];
+    const rows: string[] = [];
+    rows.push(headers.join(","));
+
+    itemAnalysis.forEach(({ q, choices, perChoice, correct, wrong }, idx) => {
+      // If no choices, still emit a row for the question
+      if (!choices.length) {
+        rows.push([csvEscape(idx + 1), csvEscape(q.question_text ?? ""), "", "", "", csvEscape(correct), csvEscape(wrong)].join(","));
+      } else {
+        choices.forEach((c) => {
+          const picked = perChoice[c.id] ?? 0;
+          rows.push([
+            csvEscape(idx + 1),
+            csvEscape(q.question_text ?? ""),
+            csvEscape(c.choice_text ?? ""),
+            csvEscape(Boolean(c.is_correct)),
+            csvEscape(picked),
+            csvEscape(correct),
+            csvEscape(wrong),
+          ].join(","));
+        });
+      }
+    });
+
+    const csv = rows.join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${selectedQuiz?.title ?? "item-analysis"}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   /* -------------------------- UI -------------------------- */
+
+  // FilterBar — removed the small "Filters" label and ensured Quarter/Module have similar shape
   const FilterBar = () => (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2">
-        <AdjustmentsHorizontalIcon className="h-4 w-4 text-neutral-600" />
-        <span className="text-xs text-neutral-600">Filters</span>
-      </div>
-
       {/* Quarter */}
       <select
-        className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm"
+        className="min-w-[180px] rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm"
         value={quarterId}
         onChange={(e) => {
           setQuarterId(e.target.value);
@@ -468,7 +554,7 @@ export default function SummaryResult() {
 
       {/* Module */}
       <select
-        className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm"
+        className="min-w-[220px] rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm"
         value={moduleId}
         onChange={(e) => {
           setModuleId(e.target.value);
@@ -527,17 +613,6 @@ export default function SummaryResult() {
           </option>
         ))}
       </select>
-
-      {/* Refresh */}
-      <button
-        type="button"
-        onClick={() => setRefreshNonce((n) => n + 1)}
-        title="Refresh"
-        className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm hover:bg-neutral-50"
-      >
-        <ArrowPathIcon className="h-5 w-5" />
-        Refresh
-      </button>
     </div>
   );
 
@@ -658,12 +733,7 @@ export default function SummaryResult() {
         </div>
       </header>
 
-      {/* New layout:
-          - Row 1: Passing score (left, normal width)
-          - Row 2: Pass/Fail donut (full width / solo row)
-          - Row 3: Pass rate (circular) + Average
-          - Row 4: Highest/Lowest (full width / solo row)
-      */}
+      {/* Content unchanged */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
         {/* Passing score */}
         <div className="rounded-xl border p-3 md:col-span-2 col-span-1 flex flex-col justify-center items-center">
@@ -735,13 +805,28 @@ export default function SummaryResult() {
   const ItemAnalysisPanel = () =>
     !questions.length ? null : (
       <section className="rounded-2xl border border-neutral-200 bg-white shadow-sm">
-        <header className="sticky top-0 z-[1] flex items-center gap-2 px-4 py-3 border-b bg-white/90">
-          <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-neutral-100">
-            <ChartBarSquareIcon className="w-5 h-5 text-neutral-700" />
+        <header className="sticky top-0 z-[1] flex items-center justify-between gap-2 px-4 py-3 border-b bg-white/90">
+          <div className="flex items-center gap-2">
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-neutral-100">
+              <ChartBarSquareIcon className="w-5 h-5 text-neutral-700" />
+            </div>
+            <div>
+              <div className="font-semibold text-neutral-900">Item Analysis</div>
+              <div className="text-xs text-neutral-500">Correct answers are highlighted in green.</div>
+            </div>
           </div>
-          <div>
-            <div className="font-semibold text-neutral-900">Item Analysis</div>
-            <div className="text-xs text-neutral-500">Correct answers are highlighted in green.</div>
+
+          {/* Small icon-only export button placed in header (no text) */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={exportItemAnalysisCSV}
+              title="Export item analysis CSV"
+              className="p-1 rounded-md hover:bg-neutral-100"
+              aria-label="Export item analysis"
+            >
+              <ArrowDownTrayIcon className="h-5 w-5 text-neutral-700" />
+            </button>
           </div>
         </header>
 
@@ -807,17 +892,34 @@ export default function SummaryResult() {
     /* Vertically scrollable to avoid overlap */
     <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm h-full flex flex-col overflow-y-auto">
       <div className="p-4 sm:p-6">
-        {/* Header */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {/* Header — cleaner: title left, filters center, export right (no refresh) */}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="text-lg font-semibold text-neutral-900">Summary Result</div>
-            <div className="text-sm text-neutral-900 flex items-center gap-1">
-              <UsersIcon className="h-8 w-8" /> Class performance for a specific test
+            <div className="text-sm text-neutral-900 flex items-center gap-2 mt-1">
+              <UsersIcon className="h-6 w-6 text-neutral-600" />
+              <span>Class performance for a specific test</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <FilterBar />
+          <div className="flex flex-1 items-center justify-between gap-3">
+            <div className="flex-1">
+              <FilterBar />
+            </div>
+
+            {/* Styled export results button (prominent filled style), no refresh button */}
+            <div className="ml-3 inline-flex items-center gap-2">
+              <button
+                type="button"
+                onClick={exportResultsCSV}
+                title="Export results CSV"
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-white shadow-sm hover:bg-blue-700 focus:outline-none"
+                aria-label="Export results CSV"
+              >
+                <DocumentChartBarIcon className="h-5 w-5" />
+                <span className="text-sm">Export CSV</span>
+              </button>
+            </div>
           </div>
         </div>
 

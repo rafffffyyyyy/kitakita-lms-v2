@@ -24,80 +24,84 @@ export const useTeacherSignUp = () => {
     setLoading(true);
     setError(null);
 
-    const { data, error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          first_name: firstName,
-          middle_name: middleName,
-          last_name: lastName,
-          role: "teacher",
+    try {
+      // normalize inputs
+      const emailClean = email.trim().toLowerCase();
+
+      const { data, error: authError } = await supabase.auth.signUp({
+        email: emailClean,
+        password: password.trim(),
+        options: {
+          data: {
+            first_name: firstName?.trim(),
+            middle_name: middleName?.trim(),
+            last_name: lastName?.trim(),
+            role: "teacher",
+          },
         },
-      },
-    });
+      });
 
-    if (authError) {
-      setLoading(false);
-      setError(authError.message);
-      return;
-    }
-
-    const user = data?.user;
-    if (!user) {
-      setLoading(false);
-      setError("Failed to retrieve user data");
-      return;
-    }
-
-    const { error: profileError } = await supabase.from("profiles").upsert([
-      {
-        id: user.id,
-        first_name: firstName,
-        middle_name: middleName,
-        last_name: lastName,
-        email,
-        created_at: new Date(),
-      },
-    ]);
-
-    if (profileError) {
-      setLoading(false);
-      setError(profileError.message);
-      return;
-    }
-
-    const { error: teacherError } = await supabase.from("teachers").insert([
-      {
-        id: user.id,
-        created_at: new Date(),
-      },
-    ]);
-
-    if (teacherError) {
-      setLoading(false);
-      setError(teacherError.message);
-      return;
-    }
-
-    const createDefaultQuarters = async (teacherId: string) => {
-      const quarters = ["1st Quarter", "2nd Quarter", "3rd Quarter", "4th Quarter"];
-      const { error } = await supabase.from("quarters").insert(
-        quarters.map((name) => ({
-          name,
-          teacher_id: teacherId,
-          created_at: new Date(),
-        }))
-      );
-      if (error) {
-        console.error("Error creating quarters:", error.message);
+      if (authError) {
+        setError(authError.message);
+        return;
       }
-    };
 
-    await createDefaultQuarters(user.id);
+      const user = data?.user;
+      if (!user) {
+        setError("Failed to retrieve user data");
+        return;
+      }
 
-    router.push("/Dashboard");
-    setLoading(false);
+      const { error: profileError } = await supabase.from("profiles").upsert([
+        {
+          id: user.id,
+          first_name: firstName?.trim(),
+          middle_name: middleName?.trim(),
+          last_name: lastName?.trim(),
+          email: emailClean,
+          created_at: new Date(),
+        },
+      ]);
+
+      if (profileError) {
+        setError(profileError.message);
+        return;
+      }
+
+      const { error: teacherError } = await supabase.from("teachers").insert([
+        {
+          id: user.id,
+          created_at: new Date(),
+        },
+      ]);
+
+      if (teacherError) {
+        setError(teacherError.message);
+        return;
+      }
+
+      // create default quarters for the teacher
+      const createDefaultQuarters = async (teacherId: string) => {
+        const quarters = ["1st Quarter", "2nd Quarter", "3rd Quarter", "4th Quarter"];
+        const { error } = await supabase.from("quarters").insert(
+          quarters.map((name) => ({
+            name,
+            teacher_id: teacherId,
+            created_at: new Date(),
+          }))
+        );
+        if (error) {
+          // non-blocking
+          console.error("Error creating quarters:", error.message);
+        }
+      };
+
+      await createDefaultQuarters(user.id);
+
+      router.push("/Dashboard");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return {
@@ -130,47 +134,63 @@ export const useTeacherLogin = () => {
     setLoading(true);
     setError(null);
 
-    const { data, error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      // normalize inputs
+      const emailClean = email.trim().toLowerCase();
+      const pw = password.trim();
 
-    if (authError) {
-      console.error("Auth error:", authError);
-      setLoading(false);
-
-      if (authError.message.includes("Invalid login credentials")) {
-        setError("The email or password you entered is incorrect.");
-      } else if (authError.message.includes("Network error")) {
-        setError("Network error. Please check your connection and try again.");
-      } else {
-        setError("An error occurred while logging in. Please try again.");
+      if (!emailClean || !pw) {
+        setError("Please enter your email and password.");
+        return false;
       }
 
-      return false;
-    }
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: emailClean,
+        password: pw,
+      });
 
-    const user = data?.user;
-    if (!user) {
-      setError("Failed to retrieve user data.");
+      if (authError) {
+        const msg = (authError.message || "").toLowerCase();
+        if (msg.includes("invalid login")) {
+          setError("The email or password you entered is incorrect.");
+        } else if (msg.includes("email not confirmed")) {
+          setError("Please verify your email, then try again.");
+        } else if (msg.includes("rate limit")) {
+          setError("Too many attempts. Please wait a minute and try again.");
+        } else if (msg.includes("network")) {
+          setError("Network error. Please check your connection and try again.");
+        } else {
+          setError("An error occurred while logging in. Please try again.");
+        }
+        return false;
+      }
+
+      const user = data?.user;
+      if (!user) {
+        setError("Failed to retrieve user data.");
+        return false;
+      }
+
+      // Gate: must exist in teachers table
+      const { data: teacherData, error: teacherError } = await supabase
+        .from("teachers")
+        .select("id")
+        .eq("id", user.id)
+        .single();
+
+      if (teacherError || !teacherData) {
+        setError("You are not authorized to access this dashboard.");
+        return false;
+      }
+
+      return true;
+    } catch (e) {
+      console.error(e);
+      setError("Unexpected error. Please try again.");
+      return false;
+    } finally {
       setLoading(false);
-      return false;
     }
-
-    const { data: teacherData, error: teacherError } = await supabase
-      .from("teachers")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-
-    if (teacherError || !teacherData) {
-      setError("You are not authorized to access this dashboard.");
-      setLoading(false);
-      return false;
-    }
-
-    setLoading(false);
-    return true;
   };
 
   return {
