@@ -11,6 +11,7 @@ import {
 } from "@heroicons/react/24/outline";
 import QuizRunner from "./QuizRunner";
 import DeleteConfirmModal from "../DeleteConfirmModal";
+import { useUser } from "@/app/UserContext"; // ✅ added
 
 type QuizRow = {
   id: string;
@@ -28,6 +29,9 @@ type QuizRow = {
 };
 
 export default function QuizViewer({ moduleId }: { moduleId: string }) {
+  const { role } = useUser(); // ✅ read role from context
+  const canManage = role === "teacher" || role === "admin"; // ✅ only these can delete
+
   const [loading, setLoading] = useState(true);
   const [quizzes, setQuizzes] = useState<QuizRow[]>([]);
   const [active, setActive] = useState<QuizRow | null>(null);
@@ -55,9 +59,14 @@ export default function QuizViewer({ moduleId }: { moduleId: string }) {
     })();
   }, [moduleId]);
 
-  // Confirmed delete handler (logic unchanged)
+  // Confirmed delete handler (guarded)
   const handleConfirmDelete = async () => {
     if (!toDelete) return;
+    if (!canManage) {
+      setDeleteError("You do not have permission to delete quizzes.");
+      return;
+    }
+
     setDeleting(true);
     setDeleteError(null);
 
@@ -183,6 +192,9 @@ export default function QuizViewer({ moduleId }: { moduleId: string }) {
               <ul role="list" className="space-y-3">
                 {quizzes.map((q) => {
                   const stat = statusFor(q);
+                  const rowCols = canManage
+                    ? "sm:grid-cols-[auto,1fr,auto]"
+                    : "sm:grid-cols-[auto,1fr]"; // ✅ no empty actions column for students
                   return (
                     <li key={q.id} className="min-w-0">
                       {/* Focusable row; no nested button conflicts */}
@@ -194,9 +206,8 @@ export default function QuizViewer({ moduleId }: { moduleId: string }) {
                         aria-label={`Open quiz ${q.title || "Untitled quiz"}`}
                         className="group block w-full rounded-xl border border-slate-200 bg-white p-3 shadow-sm ring-1 ring-transparent transition hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 sm:p-4"
                       >
-                        {/* NEW: Three-area grid that prevents overlap:
-                            [icon] [content (title + meta grid)] [actions] */}
-                        <div className="grid gap-3 sm:grid-cols-[auto,1fr,auto] sm:items-start">
+                        {/* Three-area grid (actions area omitted for students) */}
+                        <div className={`grid gap-3 ${rowCols} sm:items-start`}>
                           {/* Left: Icon */}
                           <div className="flex items-start sm:items-center">
                             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-indigo-600/10">
@@ -204,7 +215,7 @@ export default function QuizViewer({ moduleId }: { moduleId: string }) {
                             </span>
                           </div>
 
-                          {/* Middle: Title + meta grid (wraps responsively) */}
+                          {/* Middle: Title + meta */}
                           <div className="min-w-0">
                             {/* Title row */}
                             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -226,7 +237,7 @@ export default function QuizViewer({ moduleId }: { moduleId: string }) {
                               </p>
                             )}
 
-                            {/* Meta pills in a responsive grid — never overlap */}
+                            {/* Meta pills */}
                             <div className="mt-2 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
                               <MetaPill>
                                 {/* clock */}
@@ -300,21 +311,23 @@ export default function QuizViewer({ moduleId }: { moduleId: string }) {
                             </div>
                           </div>
 
-                          {/* Right: Actions (own column so it never covers content) */}
-                          <div className="sm:justify-self-end">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setToDelete(q);
-                              }}
-                              title="Delete quiz"
-                              className="inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-white p-1.5 text-slate-400 hover:bg-slate-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
-                              aria-label={`Delete quiz ${q.title || "Untitled quiz"}`}
-                            >
-                              <TrashIcon className="h-4 w-4" />
-                            </button>
-                          </div>
+                          {/* Right: Actions — only for teacher/admin */}
+                          {canManage && (
+                            <div className="sm:justify-self-end">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setToDelete(q);
+                                }}
+                                title="Delete quiz"
+                                className="inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-white p-1.5 text-slate-400 hover:bg-slate-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                                aria-label={`Delete quiz ${q.title || "Untitled quiz"}`}
+                              >
+                                <TrashIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </li>
@@ -345,8 +358,8 @@ export default function QuizViewer({ moduleId }: { moduleId: string }) {
         </div>
       </div>
 
-      {/* Delete confirmation modal */}
-      {toDelete && (
+      {/* Delete confirmation modal — only render for teacher/admin */}
+      {toDelete && canManage && (
         <DeleteConfirmModal
           fileName={toDelete.title || "Untitled quiz"}
           onConfirm={handleConfirmDelete}
