@@ -152,7 +152,17 @@ export default function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 z-[60] mt-2 w-[26rem] max-w-[92vw]">
+        /**
+         * Mobile: fixed full-width sheet below the header so it never overflows.
+         * Desktop: the same dropdown anchored to the bell.
+         */
+        <div
+          className={cx(
+            "fixed inset-x-0 top-16 z-[60] px-3",               // mobile
+            "sm:absolute sm:inset-auto sm:right-0 sm:top-full sm:mt-2 sm:px-0", // ≥640px
+            "w-full sm:w-[26rem] max-w-[100vw]"                 // sizing
+          )}
+        >
           <NotificationsPanel onClose={() => setOpen(false)} />
         </div>
       )}
@@ -461,7 +471,7 @@ function NotificationsPanel({ onClose }: { onClose: () => void }) {
   /* -------------------------- Header actions -------------------------- */
   const HeaderActions = useMemo(
     () => (
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="ml-0 sm:ml-auto flex w-full sm:w-auto flex-wrap items-center justify-end gap-1.5">
         <button
           onClick={markAllRead}
           disabled={busy || loading || rows.length === 0}
@@ -494,20 +504,20 @@ function NotificationsPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      {/* Solid white panel */}
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl ring-1 ring-black/5">
+      {/* Sheet container: flex column; list gets the scroll, never overflow screen */}
+      <div className="flex max-h-[calc(100dvh-5rem)] sm:max-h-[70vh] flex-col overflow-hidden rounded-xl sm:rounded-2xl border border-slate-200 bg-white shadow-xl ring-1 ring-black/5">
         {/* Header */}
-        <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-2.5">
+        <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-2.5">
           <div className="text-sm font-semibold text-slate-900">Notifications</div>
           {HeaderActions}
         </div>
 
         {/* List */}
-        <div className="max-h-[70vh] overflow-auto" aria-busy={loading}>
+        <div className="flex-1 overflow-auto" aria-busy={loading}>
           {loading ? (
             <ul className="divide-y divide-slate-100 px-4 py-3">
               {Array.from({ length: 6 }).map((_, i) => (
-                <li key={i} className="grid grid-cols-[2.25rem,1fr,auto,auto] items-center gap-3 py-3">
+                <li key={i} className="grid grid-cols-[2rem,1fr] sm:grid-cols-[2.25rem,1fr,auto,auto] items-center gap-3 py-3">
                   <div className="flex items-center justify-center">
                     <div className="h-5 w-5 rounded-full bg-slate-200 animate-pulse" />
                   </div>
@@ -516,10 +526,10 @@ function NotificationsPanel({ onClose }: { onClose: () => void }) {
                     <div className="mt-2 h-3 w-56 max-w-[90%] rounded bg-slate-100 animate-pulse" />
                     <div className="mt-1 h-2 w-24 rounded bg-slate-100 animate-pulse" />
                   </div>
-                  <div className="justify-self-end">
+                  <div className="hidden sm:block justify-self-end">
                     <div className="h-6 w-14 rounded bg-slate-100 animate-pulse" />
                   </div>
-                  <div className="justify-self-end">
+                  <div className="hidden sm:block justify-self-end">
                     <div className="h-6 w-7 rounded bg-slate-100 animate-pulse" />
                   </div>
                 </li>
@@ -539,8 +549,8 @@ function NotificationsPanel({ onClose }: { onClose: () => void }) {
 
                 return (
                   <li key={r.id}>
-                    {/* Four columns: icon (click to view) • message • Read • Delete */}
-                    <div className="grid grid-cols-[2.25rem,1fr,auto,auto] items-center gap-3 px-4 py-3 hover:bg-slate-50/60">
+                    {/* Mobile: 2 columns; Desktop: 4 columns */}
+                    <div className="grid grid-cols-[2rem,1fr] sm:grid-cols-[2.25rem,1fr,auto,auto] items-center gap-3 px-4 py-3 hover:bg-slate-50/60">
                       {/* Icon column (opens details) */}
                       <button
                         onClick={(e) => {
@@ -611,12 +621,12 @@ function NotificationsPanel({ onClose }: { onClose: () => void }) {
                         </div>
                       </div>
 
-                      {/* Read */}
-                      <div className="justify-self-end">
+                      {/* Read (stacks under message on mobile) */}
+                      <div className="col-span-2 col-start-2 mt-2 justify-self-end sm:col-span-1 sm:col-start-auto sm:mt-0">
                         {!r.read_at && (
                           <button
                             onClick={() => markOneRead(r.id)}
-                            className="rounded-md px-2 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-600/20 hover:bg-emerald-50"
+                            className="rounded-md px-2 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-600/20 hover:bg-emerald-50 whitespace-nowrap"
                             title="Mark as read"
                           >
                             Read
@@ -624,8 +634,8 @@ function NotificationsPanel({ onClose }: { onClose: () => void }) {
                         )}
                       </div>
 
-                      {/* Delete */}
-                      <div className="justify-self-end">
+                      {/* Delete (stacks under message on mobile) */}
+                      <div className="col-span-2 col-start-2 mt-1 justify-self-end sm:col-span-1 sm:col-start-auto sm:mt-0">
                         <button
                           onClick={() => setConfirmDlg({ mode: "one", id: r.id, title: r.title })}
                           className="inline-flex items-center justify-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-rose-700 ring-1 ring-rose-600/20 hover:bg-rose-50"
@@ -714,7 +724,11 @@ function PortalCenteredConfirm({
             <div className="text-sm font-semibold text-slate-900">{title}</div>
             {body && <div className="mt-1 text-sm text-slate-600">{body}</div>}
           </div>
-          <button onClick={onCancel} className="ml-auto rounded-full p-1 hover:bg-slate-100" aria-label="Close">
+          <button
+            onClick={onCancel}
+            className="ml-auto rounded-full p-1 hover:bg-slate-100"
+            aria-label="Close"
+          >
             <XMarkIcon className="h-5 w-5 text-slate-500" />
           </button>
         </div>
