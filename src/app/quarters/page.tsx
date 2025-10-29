@@ -46,10 +46,8 @@ export default function QuartersPage() {
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState<string | null>(null);
 
-  const [showDebug, setShowDebug] = useState(false);
   const [query, setQuery] = useState("");
 
-  const authUidRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -78,7 +76,6 @@ export default function QuartersPage() {
       setErrorText(null);
 
       const authUid = await resolveAuthUid();
-      authUidRef.current = authUid;
 
       if (!authUid && role !== "admin") {
         if (!cancel && mountedRef.current) {
@@ -160,7 +157,7 @@ export default function QuartersPage() {
       .order("name", { ascending: true });
 
     if (error) throw error;
-    return data ?? [];
+    return (data ?? []) as Quarter[];
   }
 
   const total = quarters.length;
@@ -339,24 +336,6 @@ export default function QuartersPage() {
                 ? "Create your first quarter to get started."
                 : "There are no quarters to display at the moment."}
             </p>
-          </div>
-        )}
-
-        {showDebug && (
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-700">
-            <div className="mb-2 font-medium">Debug</div>
-            <pre className="max-h-72 overflow-auto whitespace-pre-wrap">
-{JSON.stringify(
-  {
-    role,
-    authUid: authUidRef.current,
-    count: quarters.length,
-    rows: quarters.map((r) => ({ id: r.id, name: r.name, teacher_id: r.teacher_id })),
-  },
-  null,
-  2
-)}
-            </pre>
           </div>
         )}
       </main>
