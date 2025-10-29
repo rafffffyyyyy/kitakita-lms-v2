@@ -254,15 +254,6 @@ export default function QuartersPage() {
                 />
               </div>
             </div>
-
-            <button
-              type="button"
-              onClick={() => setShowDebug((s) => !s)}
-              className="whitespace-nowrap w-full sm:w-auto rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              title="Toggle debug"
-            >
-              Debug
-            </button>
           </div>
         </div>
       </header>
