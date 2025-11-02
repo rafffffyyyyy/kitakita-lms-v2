@@ -24,6 +24,7 @@ import {
   CheckIcon,
   ExclamationTriangleIcon,
   MagnifyingGlassIcon,
+  BugAntIcon, // ✅ for the Debug button
 } from "@heroicons/react/24/outline";
 import { supabase } from "@/lib/supabase";
 import { useUser } from "@/app/UserContext";
@@ -44,7 +45,9 @@ function extractBetween(src: string, start: RegExp, end?: RegExp): string | null
   const e = rest.search(end);
   return (e === -1 ? rest : rest.slice(0, e)).trim();
 }
-function stripLabel(s: string, re: RegExp) { return s.replace(re, "").trim(); }
+function stripLabel(s: string, re: RegExp) {
+  return s.replace(re, "").trim();
+}
 function normalizeCorrected(s: string) {
   const quoted = s.match(/"([^"]+)"/);
   if (quoted) return quoted[1].trim();
@@ -62,10 +65,31 @@ function toFlatBullets(block: string): string[] {
     const line = raw.trimEnd();
     if (!line.trim()) continue;
     const m = line.match(bulletRe);
-    if (m) { if (carry) { bullets.push(carry.trim()); carry = ""; } carry = m[1].trim(); continue; }
-    if (line.search(/[–—]\s+/) === 0) { if (carry) { bullets.push(carry.trim()); carry = ""; } carry = line.replace(/[–—]\s+/, "").trim(); continue; }
-    if (carry && joinableRe.test(raw)) { carry += " " + raw.trim(); }
-    else { if (carry) { bullets.push(carry.trim()); carry = ""; } bullets.push(line.trim()); }
+    if (m) {
+      if (carry) {
+        bullets.push(carry.trim());
+        carry = "";
+      }
+      carry = m[1].trim();
+      continue;
+    }
+    if (line.search(/[–—]\s+/) === 0) {
+      if (carry) {
+        bullets.push(carry.trim());
+        carry = "";
+      }
+      carry = line.replace(/[–—]\s+/, "").trim();
+      continue;
+    }
+    if (carry && joinableRe.test(raw)) {
+      carry += " " + raw.trim();
+    } else {
+      if (carry) {
+        bullets.push(carry.trim());
+        carry = "";
+      }
+      bullets.push(line.trim());
+    }
   }
   if (carry) bullets.push(carry.trim());
   return bullets
@@ -85,10 +109,12 @@ function parseGrammarResponse(raw: string) {
   let issues =
     extractBetween(unwrapped, RE_ERRS, RE_CORR) ??
     extractBetween(unwrapped, RE_ERRS, RE_TIP_LABEL) ??
-    extractBetween(unwrapped, RE_ERRS) ?? "";
+    extractBetween(unwrapped, RE_ERRS) ??
+    "";
   let corrected =
     extractBetween(unwrapped, RE_CORR, RE_TIP_LABEL) ??
-    extractBetween(unwrapped, RE_CORR) ?? "";
+    extractBetween(unwrapped, RE_CORR) ??
+    "";
   let tips = extractBetween(unwrapped, RE_TIP_LABEL) ?? "";
 
   original = stripLabel(original, /^Original\s*Sentence\s*[:\-]\s*/i);
@@ -113,7 +139,7 @@ async function getGrammarText(input: string): Promise<string> {
   if (direct) return String(direct);
   const parts: string[] = [];
   if (res?.original) parts.push(`1. Original Sentence:\n- ${res.original}`);
-  const errors = Array.isArray(res?.errors) ? res.errors.join("\n- ") : (res?.errors ? String(res.errors) : "");
+  const errors = Array.isArray(res?.errors) ? res.errors.join("\n- ") : res?.errors ? String(res.errors) : "";
   if (errors) parts.push(`2. Errors & Explanation:\n- ${errors}`);
   if (res?.corrected) parts.push(`3. Corrected Sentence:\n- ${res.corrected}`);
   if (res?.tips) parts.push(`Tips:\n- ${res.tips}`);
@@ -123,11 +149,21 @@ async function getGrammarText(input: string): Promise<string> {
 /* ----------------------------- HELPERS ---------------------------- */
 function fmtDateTime(iso: string | null | undefined) {
   if (!iso) return "—";
-  try { return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }); }
-  catch { return "—"; }
+  try {
+    return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  } catch {
+    return "—";
+  }
 }
-function fileExt(name: string) { const p = name.split("."); return (p[p.length - 1] || "").toLowerCase(); }
-function uuidLike() { return (typeof crypto !== "undefined" && (crypto as any).randomUUID) ? (crypto as any).randomUUID() : Math.random().toString(36).slice(2); }
+function fileExt(name: string) {
+  const p = name.split(".");
+  return (p[p.length - 1] || "").toLowerCase();
+}
+function uuidLike() {
+  return typeof crypto !== "undefined" && (crypto as any).randomUUID
+    ? (crypto as any).randomUUID()
+    : Math.random().toString(36).slice(2);
+}
 function buildSubmissionPath(assignmentId: string, userId: string, fileName: string) {
   return `submissions/${assignmentId}/${userId}/${uuidLike()}.${fileExt(fileName)}`;
 }
@@ -177,7 +213,7 @@ type AssignmentFile = {
   Name?: string | null;
   created_at: string;
 };
-type ModuleRow = { id: string; title: string; description: string | null; youtube_url: string | null; };
+type ModuleRow = { id: string; title: string; description: string | null; youtube_url: string | null };
 type Student = {
   id: string;
   first_name: string | null;
@@ -195,13 +231,16 @@ type SubmissionRow = {
   submitted_at: string | null;
 };
 
-/* ----------------------- Manage Audience Sheet ----------------------- */
+/* ----------------------- Manage Audience Sheet (with Debug) ----------------------- */
+/** ✅ UPDATED: uses plain INSERT (no upsert), sending only real columns.
+ *  + Debug panel to see payloads and errors if RLS blocks writes.
+ */
 function ManageAudienceSheet({
   open,
   onClose,
   assignmentId,
   teacherId,
-  initialSelectedIds,
+  initialSelectedIds, // kept for signature; server is the source of truth
   onSaved,
 }: {
   open: boolean;
@@ -213,66 +252,132 @@ function ManageAudienceSheet({
 }) {
   type SectionFilter = "ALL" | number;
 
+  type AudienceRow = {
+    student_id: string;
+    first_name: string | null;
+    last_name: string | null;
+    section_id: number | null;
+    is_assigned: boolean;
+  };
+
   const [loading, setLoading] = useState(false);
   const [sections, setSections] = useState<Array<{ id: number; name: string }>>([]);
-  const [allStudents, setAllStudents] = useState<Student[]>([]);
+  const [allRows, setAllRows] = useState<AudienceRow[]>([]);
   const [activeFilter, setActiveFilter] = useState<SectionFilter>("ALL");
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set(initialSelectedIds));
   const [saving, setSaving] = useState(false);
-  useEffect(() => setSelected(new Set(initialSelectedIds)), [initialSelectedIds]);
 
-  // load ALL students for this teacher + section list
+  // selection maps
+  const [initialSet, setInitialSet] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // 🔎 Debug state
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugLines, setDebugLines] = useState<string[]>([]);
+  const pushDebug = (label: string, payload?: unknown) => {
+    const stamp = new Date().toLocaleTimeString();
+    let msg = `[${stamp}] ${label}`;
+    if (payload !== undefined) {
+      try {
+        msg += ` → ${JSON.stringify(payload)}`;
+      } catch {
+        msg += ` → <unserializable>`;
+      }
+    }
+    console.log(label, payload);
+    setDebugLines((prev) => [...prev, msg].slice(-400));
+  };
+
+  // load from tables
   useEffect(() => {
     if (!open) return;
     (async () => {
       setLoading(true);
+      setDebugLines([]);
       try {
-        // students for teacher (full list)
-        const { data: studs } = await supabase
+        pushDebug("LOAD start", { assignmentId, teacherId });
+
+        // 1) teacher's students
+        const { data: studs, error: sErr } = await supabase
           .from("students")
-          .select("id, first_name, middle_name, last_name, section_id")
+          .select("id, first_name, last_name, section_id")
           .eq("teacher_id", teacherId)
           .order("last_name", { ascending: true });
 
-        setAllStudents((studs ?? []) as Student[]);
+        if (sErr) throw sErr;
+        pushDebug("Loaded students", { count: studs?.length || 0 });
 
-        // sections derived from those students
-        const secIds = Array.from(
-          new Set((studs ?? []).map((r) => r.section_id).filter(Boolean) as number[])
+        // 2) current assignment audience
+        const { data: aud, error: aErr } = await supabase
+          .from("assignment_students")
+          .select("student_id")
+          .eq("assignment_id", assignmentId);
+
+        if (aErr) throw aErr;
+        pushDebug("Loaded audience", { count: aud?.length || 0 });
+
+        const init = new Set((aud ?? []).map((r: any) => r.student_id as string));
+        setInitialSet(init);
+        setSelected(new Set(init));
+
+        // 3) combine + sort
+        const rows: AudienceRow[] = (studs ?? []).map((st: any) => ({
+          student_id: st.id,
+          first_name: st.first_name ?? null,
+          last_name: st.last_name ?? null,
+          section_id: st.section_id ?? null,
+          is_assigned: init.has(st.id),
+        }));
+        rows.sort((a, b) =>
+          `${a.last_name ?? ""} ${a.first_name ?? ""}`.localeCompare(`${b.last_name ?? ""} ${b.first_name ?? ""}`)
         );
-        let secs: Array<{ id: number; name: string }> = [];
+        setAllRows(rows);
+        pushDebug("Combined rows", { total: rows.length });
+
+        // 4) sections used
+        const secIds = Array.from(
+          new Set(rows.map((r) => r.section_id).filter((v): v is number => typeof v === "number"))
+        );
         if (secIds.length) {
-          const { data } = await supabase
+          const { data: secs, error: secErr } = await supabase
             .from("sections")
-            .select("id, name")
-            .in("id", secIds)
-            .order("name", { ascending: true });
-          secs = data ?? [];
+            .select("id,name")
+            .in("id", secIds);
+          if (secErr) throw secErr;
+          setSections((secs ?? []) as Array<{ id: number; name: string }>);
+          pushDebug("Loaded sections", { count: secs?.length || 0 });
+        } else {
+          setSections([]);
+          pushDebug("No sections referenced by these students");
         }
-        setSections(secs);
+
         setActiveFilter("ALL");
+        pushDebug("LOAD done");
+      } catch (e: any) {
+        pushDebug("LOAD failed", { code: e?.code, message: e?.message || String(e) });
+        alert("Failed to load audience. Please try again.");
+        setAllRows([]);
+        setSections([]);
+        setInitialSet(new Set());
+        setSelected(new Set());
       } finally {
         setLoading(false);
       }
     })();
-  }, [open, teacherId]);
+  }, [open, assignmentId, teacherId]);
 
-  // filter by section + search
-  const filteredStudents = useMemo(() => {
-    const bySection =
-      activeFilter === "ALL"
-        ? allStudents
-        : allStudents.filter((s) => s.section_id === activeFilter);
+  // filter + search
+  const filteredRows = useMemo(() => {
+    const bySection = activeFilter === "ALL" ? allRows : allRows.filter((r) => r.section_id === activeFilter);
     const q = query.trim().toLowerCase();
     if (!q) return bySection;
-    return bySection.filter((s) => {
-      const name = [s.first_name, s.middle_name, s.last_name].filter(Boolean).join(" ").toLowerCase();
+    return bySection.filter((r) => {
+      const name = `${r.first_name ?? ""} ${r.last_name ?? ""}`.toLowerCase();
       return name.includes(q);
     });
-  }, [allStudents, activeFilter, query]);
+  }, [allRows, activeFilter, query]);
 
-  const visibleIds = useMemo(() => filteredStudents.map((s) => s.id), [filteredStudents]);
+  const visibleIds = useMemo(() => filteredRows.map((r) => r.student_id), [filteredRows]);
   const allChecked = useMemo(
     () => visibleIds.length > 0 && visibleIds.every((id) => selected.has(id)),
     [visibleIds, selected]
@@ -282,11 +387,12 @@ function ManageAudienceSheet({
     [visibleIds, selected, allChecked]
   );
 
-  const toggleOne = (id: string) => {
+  const setOne = (id: string, value: boolean) => {
     const next = new Set(selected);
-    next.has(id) ? next.delete(id) : next.add(id);
+    value ? next.add(id) : next.delete(id);
     setSelected(next);
   };
+
   const toggleVisibleAll = () => {
     const next = new Set(selected);
     if (allChecked) visibleIds.forEach((id) => next.delete(id));
@@ -294,39 +400,68 @@ function ManageAudienceSheet({
     setSelected(next);
   };
 
+  const sectionName = (id: number | null | undefined) => {
+    if (id == null) return "No section";
+    const s = sections.find((x) => x.id === id);
+    return s?.name ?? `Section ${id}`;
+  };
+
+  // 🔧 UPDATED SAVE: plain INSERT (no upsert), payload includes only real columns, no unsupported options
   const save = async () => {
     setSaving(true);
     try {
-      // fetch current audience from DB
-      const { data: curRows } = await supabase
-        .from("assignment_students")
-        .select("student_id")
-        .eq("assignment_id", assignmentId);
+      const nextSet = new Set(selected);
+      const toEnable = Array.from(nextSet).filter((id) => !initialSet.has(id));
+      const toDisable = Array.from(initialSet).filter((id) => !nextSet.has(id));
 
-      const current = new Set((curRows ?? []).map((r: any) => r.student_id as string));
-      const next = new Set(Array.from(selected));
+      pushDebug("SAVE begin", { to_enable: toEnable.length, to_disable: toDisable.length });
 
-      const toInsert = Array.from(next).filter((id) => !current.has(id));
-      const toDelete = Array.from(current).filter((id) => !next.has(id));
+      if (toEnable.length) {
+        const rows = toEnable.map((sid) => ({ assignment_id: assignmentId, student_id: sid }));
+        pushDebug("INSERT payload (assignment_students)", rows);
 
-      if (toInsert.length) {
-        const rows = toInsert.map((sid) => ({ assignment_id: assignmentId, student_id: sid }));
+        // ⛔ No { returning: 'minimal' } — not supported by your supabase-js typings
         const { error: insErr } = await supabase.from("assignment_students").insert(rows);
-        if (insErr) throw insErr;
+
+        if (insErr && insErr.code !== "23505") {
+          // 23505: unique_violation — safe to ignore if a unique constraint exists
+          pushDebug("Insert error", { code: insErr.code, message: insErr.message, details: insErr.details });
+          throw insErr;
+        } else if (!insErr) {
+          pushDebug("Insert ok");
+        } else {
+          pushDebug("Insert had duplicate rows; ignored");
+        }
       }
-      if (toDelete.length) {
+
+      if (toDisable.length) {
+        pushDebug("Deleting assignment_students", toDisable);
         const { error: delErr } = await supabase
           .from("assignment_students")
           .delete()
           .eq("assignment_id", assignmentId)
-          .in("student_id", toDelete);
-        if (delErr) throw delErr;
+          .in("student_id", toDisable);
+        if (delErr) {
+          pushDebug("Delete error", { code: delErr.code, message: delErr.message, details: delErr.details });
+          throw delErr;
+        } else {
+          pushDebug("Delete ok");
+        }
       }
 
-      onSaved(Array.from(next));
+      pushDebug("SAVE done — refreshing selection");
+      onSaved(Array.from(nextSet));
       onClose();
     } catch (e: any) {
-      alert(e?.message || "Failed to update audience.");
+      const info = { code: e?.code, message: e?.message || String(e), details: e?.details };
+      pushDebug("SAVE failed", info);
+
+      const hint =
+        e?.code === "42501" || /RLS|row level|permission|not allowed/i.test(String(e?.message))
+          ? "\nHint: RLS is likely blocking insert/delete on assignment_students for this teacher."
+          : "";
+
+      alert(`Saving audience failed. Please try again.\n\n${info.code || ""} ${info.message || ""}${hint}`);
     } finally {
       setSaving(false);
     }
@@ -341,14 +476,25 @@ function ManageAudienceSheet({
         {/* Header */}
         <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b bg-gray-50/80">
           <div className="min-w-0">
-            <h3 className="text.base sm:text-lg font-semibold truncate">Manage Audience</h3>
-            <p className="text-xs sm:text-sm text-gray-500">
-              Choose which students receive this private assignment.
-            </p>
+            <h3 className="text-base sm:text-lg font-semibold truncate">Manage Audience</h3>
+            <p className="text-xs sm:text-sm text-gray-500">Choose which students receive this private assignment.</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-200" aria-label="Close">
-            <XMarkIcon className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDebugOpen((v) => !v)}
+              className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-[11px] ${
+                debugOpen ? "bg-amber-50" : ""
+              }`}
+              title="Show debug panel"
+            >
+              <BugAntIcon className="h-3.5 w-3.5" />
+              Debug
+            </button>
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-200" aria-label="Close">
+              <XMarkIcon className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="grid sm:grid-cols-[220px,1fr] gap-0 sm:gap-4">
@@ -411,6 +557,36 @@ function ManageAudienceSheet({
                   <CheckIcon className={`w-4 h-4 ${someChecked ? "opacity-60" : ""}`} />
                 </button>
               </div>
+
+              {/* Debug drawer */}
+              {debugOpen && (
+                <div className="mt-2 rounded-lg border bg-amber-50/40 p-2">
+                  <div className="mb-1 flex items-center justify-between">
+                    <div className="text-xs font-medium text-amber-800">
+                      Debug • assignment: <span className="font-mono">{assignmentId.slice(0, 8)}…</span> • teacher:{" "}
+                      <span className="font-mono">{(teacherId || "").slice(0, 8)}…</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-amber-700">
+                        selected: {selected.size} • initial: {initialSet.size}
+                      </span>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(debugLines.join("\n"))}
+                        className="rounded border px-2 py-0.5 text-[11px] hover:bg-white"
+                      >
+                        Copy log
+                      </button>
+                    </div>
+                  </div>
+                  <div className="max-h-40 overflow-auto text-[11px] font-mono leading-4 text-amber-900 whitespace-pre-wrap">
+                    {debugLines.length ? (
+                      debugLines.map((l, i) => <div key={i}>{l}</div>)
+                    ) : (
+                      <div className="italic text-amber-700">No logs yet. Try Save.</div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="p-3 sm:p-4">
@@ -422,40 +598,39 @@ function ManageAudienceSheet({
                 </div>
               )}
 
-              {!loading && filteredStudents.length === 0 && (
+              {!loading && filteredRows.length === 0 && (
                 <div className="text-sm text-gray-500 flex items-center gap-2">
                   <ExclamationTriangleIcon className="w-4 h-4" /> No students match your filter.
                 </div>
               )}
 
               <ul className="space-y-2">
-                {filteredStudents.map((st) => {
-                  const checked = selected.has(st.id);
-                  const sectionName =
-                    sections.find((s) => s.id === st.section_id)?.name ?? (st.section_id ? `Sec ${st.section_id}` : "No section");
+                {filteredRows.map((r) => {
+                  const checked = selected.has(r.student_id);
                   return (
-                    <li key={st.id}>
+                    <li key={r.student_id}>
                       <label
                         className={`flex items-center gap-3 p-2.5 border rounded-xl cursor-pointer transition ${
                           checked ? "bg-indigo-50 border-indigo-300" : "hover:bg-gray-50"
                         }`}
+                        title={checked ? "Included in audience" : "Not included"}
                       >
                         <input
                           type="checkbox"
                           className="accent-indigo-600"
                           checked={checked}
-                          onChange={() => toggleOne(st.id)}
+                          onChange={(e) => setOne(r.student_id, e.target.checked)}
                         />
                         <div className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center">
                           <UserGroupIcon className="w-4 h-4 text-gray-500" />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-sm font-medium">
-                            {[st.last_name, st.first_name].filter(Boolean).join(", ") || "Unnamed"}
+                            {[r.last_name, r.first_name].filter(Boolean).join(", ") || "Unnamed"}
                           </div>
                           <div className="mt-0.5">
                             <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600 ring-1 ring-slate-200">
-                              {sectionName}
+                              {sectionName(r.section_id)}
                             </span>
                           </div>
                         </div>
@@ -478,7 +653,7 @@ function ManageAudienceSheet({
             disabled={saving}
             className="px-3 sm:px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            Save
+            {saving ? "Saving…" : "Save"}
           </button>
         </div>
       </div>
@@ -494,12 +669,7 @@ type Props = {
   onSubmitted?: () => void;
 };
 
-export default function AssignmentView({
-  assignmentId,
-  moduleId: moduleIdProp,
-  roleOverride,
-  onSubmitted,
-}: Props) {
+export default function AssignmentView({ assignmentId, moduleId: moduleIdProp, roleOverride, onSubmitted }: Props) {
   const { role: ctxRole } = useUser();
   const role = roleOverride ?? ctxRole;
 
@@ -564,13 +734,12 @@ export default function AssignmentView({
       } catch {}
 
       // assignment
-      const { data: a, error: e1 } = await supabase
-        .from("assignments")
-        .select("*")
-        .eq("id", assignmentId)
-        .single();
+      const { data: a, error: e1 } = await supabase.from("assignments").select("*").eq("id", assignmentId).single();
 
-      if (e1 || !a) { setErr(e1?.message ?? "Assignment not found."); return; }
+      if (e1 || !a) {
+        setErr(e1?.message ?? "Assignment not found.");
+        return;
+      }
       setAssignment(a as unknown as Assignment);
 
       // module
@@ -587,7 +756,7 @@ export default function AssignmentView({
       // file (latest)
       const { data: af, error: e3 } = await supabase
         .from("assignment_files")
-        .select("id, assignment_id, file_url, file_name, created_at,file_name")
+        .select("id, assignment_id, file_url, file_name, created_at")
         .eq("assignment_id", assignmentId)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -652,7 +821,7 @@ export default function AssignmentView({
 
         if (lastSub) {
           const g = (lastSub as any).grade;
-          setGradeScore(typeof g === "number" ? g : (g != null ? Number(g) : null));
+          setGradeScore(typeof g === "number" ? g : g != null ? Number(g) : null);
           setTeacherFeedback((lastSub as any).feedback ?? null);
         } else {
           setGradeScore(null);
@@ -672,7 +841,12 @@ export default function AssignmentView({
       try {
         const { data: auth } = await supabase.auth.getUser();
         const uid = auth.user?.id;
-        if (!uid) { setMySubmission(null); setMySubmissionUrl(null); setMyFileExtLower(""); return; }
+        if (!uid) {
+          setMySubmission(null);
+          setMySubmissionUrl(null);
+          setMyFileExtLower("");
+          return;
+        }
 
         const { data: last } = await supabase
           .from("assignment_submissions")
@@ -732,8 +906,9 @@ export default function AssignmentView({
             baseStudents = [];
           }
         } else {
-          if (!teacherId) { baseStudents = []; }
-          else {
+          if (!teacherId) {
+            baseStudents = [];
+          } else {
             const { data: studs } = await supabase
               .from("students")
               .select("id, first_name, middle_name, last_name, section_id")
@@ -749,10 +924,7 @@ export default function AssignmentView({
         );
         let sectionNameById: Record<number, string> = {};
         if (sectionIds.length) {
-          const { data: secs } = await supabase
-            .from("sections")
-            .select("id, name")
-            .in("id", sectionIds);
+          const { data: secs } = await supabase.from("sections").select("id, name").in("id", sectionIds);
           sectionNameById = Object.fromEntries((secs ?? []).map((r: { id: number; name: string }) => [r.id, r.name]));
         }
         const withNames = baseStudents.map((s) => ({
@@ -805,9 +977,7 @@ export default function AssignmentView({
         map.set(s.section_id, s.section_name ?? `Section ${s.section_id}`);
       }
     }
-    return Array.from(map.entries()).sort((a, b) =>
-      String(a[1]).localeCompare(String(b[1]))
-    );
+    return Array.from(map.entries()).sort((a, b) => String(a[1]).localeCompare(String(b[1])));
   }, [students]);
 
   const filteredStudents = useMemo(() => {
@@ -944,6 +1114,8 @@ export default function AssignmentView({
     const score = assignment?.max_score ?? 100;
     const from = fmtDateTime(assignment?.available_from);
     const now = Date.now();
+    const to = fmtDateTime(assignment?.due_at);
+
     const fromTs = assignment?.available_from ? Date.parse(assignment.available_from) : null;
     const dueTs = assignment?.due_at ? Date.parse(assignment.due_at) : null;
     const isOpen = (fromTs == null || now >= fromTs) && (dueTs == null || now <= dueTs);
@@ -992,8 +1164,12 @@ export default function AssignmentView({
               <dt className="text-xs text-slate-500">Max Attempts</dt>
               <dd className="text-sm font-medium text-slate-800">
                 {assignment?.max_attempts == null
-                  ? isStudent ? `Unlimited (Used: ${attemptsUsed})` : "Unlimited"
-                  : isStudent ? `${assignment.max_attempts} (Used: ${attemptsUsed})` : assignment.max_attempts}
+                  ? isStudent
+                    ? `Unlimited (Used: ${attemptsUsed})`
+                    : "Unlimited"
+                  : isStudent
+                  ? `${assignment.max_attempts} (Used: ${attemptsUsed})`
+                  : assignment.max_attempts}
               </dd>
             </div>
           </div>
@@ -1023,18 +1199,27 @@ export default function AssignmentView({
     if (!isStudent || !assignment) return;
     if (submitting) return;
 
-    if (!windowState.isOpen) { setErr(windowState.reason || "Submission window is closed."); return; }
+    if (!windowState.isOpen) {
+      setErr(windowState.reason || "Submission window is closed.");
+      return;
+    }
 
     const limit = assignment.max_attempts;
     const attemptsExceeded = limit != null && attemptsUsed >= limit;
-    if (attemptsExceeded) { setErr("You have used all your attempts for this assignment."); return; }
+    if (attemptsExceeded) {
+      setErr("You have used all your attempts for this assignment.");
+      return;
+    }
 
     setSubmitting(true);
     setErr(null);
     setOkMsg(null);
 
     try {
-      if (!answerText.trim() && !uploadFile) { setErr("Please write an answer or attach a file."); return; }
+      if (!answerText.trim() && !uploadFile) {
+        setErr("Please write an answer or attach a file.");
+        return;
+      }
 
       const { data: authRes, error: authErr } = await supabase.auth.getUser();
       if (authErr || !authRes?.user?.id) throw new Error("Not authenticated.");
@@ -1046,7 +1231,12 @@ export default function AssignmentView({
         uploadedPath = await uploadAndReturnPath(path, uploadFile);
       }
 
-      const payload = { assignment_id: assignment.id, student_id: studentId, answer_text: answerText || null, file_url: uploadedPath };
+      const payload = {
+        assignment_id: assignment.id,
+        student_id: studentId,
+        answer_text: answerText || null,
+        file_url: uploadedPath,
+      };
       const { error: insErr } = await supabase.from("assignment_submissions").insert(payload);
       if (insErr) throw new Error(insErr.message || "Insert failed.");
 
@@ -1101,7 +1291,8 @@ export default function AssignmentView({
 
   const displayName = fileMeta?.file_name || fileMeta?.Name || "";
   const initials = (s: Student) => {
-    const f = (s.first_name || "").trim(); const l = (s.last_name || "").trim();
+    const f = (s.first_name || "").trim();
+    const l = (s.last_name || "").trim();
     return (f[0] || "").toUpperCase() + (l[0] || "").toUpperCase();
   };
   const fullName = (s: Student) => [s.first_name, s.middle_name, s.last_name].filter(Boolean).join(" ");
@@ -1119,16 +1310,30 @@ export default function AssignmentView({
   return (
     <div className="w-full">
       {showSuccess && (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="submit-success-title">
+        <div
+          className="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="submit-success-title"
+        >
           <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5">
             <div className="flex items-center gap-3 bg-emerald-600/95 px-5 py-4 text-white">
-              <div className="rounded-full bg-white/10 p-2"><CheckCircleIcon className="h-6 w-6" /></div>
-              <h2 id="submit-success-title" className="text-base font-semibold">Submission Complete</h2>
+              <div className="rounded-full bg-white/10 p-2">
+                <CheckCircleIcon className="h-6 w-6" />
+              </div>
+              <h2 id="submit-success-title" className="text-base font-semibold">
+                Submission Complete
+              </h2>
             </div>
             <div className="px-5 pb-5 pt-4">
               <p className="text-sm text-slate-700">Your assignment was submitted successfully.</p>
               <div className="mt-5 flex justify-end">
-                <button onClick={() => setShowSuccess(false)} className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">Close</button>
+                <button
+                  onClick={() => setShowSuccess(false)}
+                  className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>
@@ -1156,19 +1361,25 @@ export default function AssignmentView({
                   </span>
                 )}
               </div>
-              <h1 className="mt-2 text-xl sm:text-2xl font-semibold tracking-tight text-slate-900 truncate">{assignment?.name ?? "—"}</h1>
+              <h1 className="mt-2 text-xl sm:text-2xl font-semibold tracking-tight text-slate-900 truncate">
+                {assignment?.name ?? "—"}
+              </h1>
               {assignment?.instruction ? (
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 whitespace-pre-line">
                   {assignment.instruction}
                 </p>
               ) : null}
               {assignment?.is_private && isStudent && (
-                <p className="mt-1 text-xs text-indigo-700">This is a private assignment assigned to selected students.</p>
+                <p className="mt-1 text-xs text-indigo-700">
+                  This is a private assignment assigned to selected students.
+                </p>
               )}
             </div>
             <span
               className={`shrink-0 rounded-full px-3 py-1 text-xs ring-1 whitespace-nowrap ${
-                isStudent ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-indigo-50 text-indigo-700 ring-indigo-200"
+                isStudent
+                  ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                  : "bg-indigo-50 text-indigo-700 ring-indigo-200"
               }`}
             >
               {isStudent ? "Student View" : "Teacher View"}
@@ -1191,7 +1402,9 @@ export default function AssignmentView({
 
                 <form onSubmit={handleSubmit} className="space-y-3">
                   <div>
-                    <label htmlFor="answer-text" className="mb-1 block text-xs font-medium text-slate-600">Answer (text)</label>
+                    <label htmlFor="answer-text" className="mb-1 block text-xs font-medium text-slate-600">
+                      Answer (text)
+                    </label>
                     <textarea
                       id="answer-text"
                       value={answerText}
@@ -1200,8 +1413,13 @@ export default function AssignmentView({
                       className="h-48 w-full resize-y rounded-xl border bg-white p-3 text-sm outline-none ring-1 ring-transparent transition focus:ring-2 focus:ring-indigo-500"
                       aria-label="Answer text"
                     />
-                    <p className="mt-1 text-[11px] text-slate-500">Tip: You can use the AI Grammar Check to refine your answer.</p>
-                    <p className="mt-1 text-[11px] text-slate-500">Attempts used: {attemptsUsed}{attemptsLimit != null ? ` of ${attemptsLimit}` : " (unlimited)"}</p>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Tip: You can use the AI Grammar Check to refine your answer.
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Attempts used: {attemptsUsed}
+                      {attemptsLimit != null ? ` of ${attemptsLimit}` : " (unlimited)"}
+                    </p>
                   </div>
 
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -1225,7 +1443,10 @@ export default function AssignmentView({
                       {uploadFile ? (
                         <button
                           type="button"
-                          onClick={() => { setUploadFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+                          onClick={() => {
+                            setUploadFile(null);
+                            if (fileInputRef.current) fileInputRef.current.value = "";
+                          }}
                           className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                           title="Remove file"
                         >
@@ -1239,7 +1460,13 @@ export default function AssignmentView({
                       disabled={submitting || attemptsReached || !windowState.isOpen}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50"
                       aria-busy={submitting ? "true" : "false"}
-                      title={!windowState.isOpen ? (windowState.reason || "Submission closed") : (attemptsReached ? "No attempts remaining" : "Submit your answer")}
+                      title={
+                        !windowState.isOpen
+                          ? windowState.reason || "Submission closed"
+                          : attemptsReached
+                          ? "No attempts remaining"
+                          : "Submit your answer"
+                      }
                     >
                       <CheckCircleIcon className="h-5 w-5" aria-hidden="true" />
                       {submitting ? "Submitting…" : "Submit Assignment"}
@@ -1261,16 +1488,22 @@ export default function AssignmentView({
                     onClick={async () => {
                       if (!answerText.trim()) return;
                       setGrammarLoading(true);
-                      setFeedback(""); setCorrected(""); setTipsText("");
+                      setFeedback("");
+                      setCorrected("");
+                      setTipsText("");
                       try {
                         const rawText = await getGrammarText(answerText);
                         const parsed = parseGrammarResponse(String(rawText ?? ""));
                         setCorrected(parsed.corrected || "—");
                         const issueBullets = toFlatBullets(parsed.issuesBlock || "");
-                        setFeedback(issueBullets.length ? issueBullets.map((b) => `• ${b}`).join("\n") : "No issues found.");
+                        setFeedback(
+                          issueBullets.length ? issueBullets.map((b) => `• ${b}`).join("\n") : "No issues found."
+                        );
                         const tipsBullets = parsed.tips ? toFlatBullets(parsed.tips) : [];
                         setTipsText(tipsBullets.length ? tipsBullets.map((b) => `• ${b}`).join("\n") : "");
-                      } finally { setGrammarLoading(false); }
+                      } finally {
+                        setGrammarLoading(false);
+                      }
                     }}
                     disabled={grammarLoading || !answerText.trim()}
                     className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50 whitespace-nowrap"
@@ -1284,21 +1517,53 @@ export default function AssignmentView({
                 <div className="grid grid-cols-1 gap-3">
                   <div className="rounded-xl border p-3">
                     <div className="mb-1 text-xs font-semibold text-slate-700">Corrected Version</div>
-                    <textarea value={corrected} readOnly className="h-44 w-full resize-none rounded-lg bg-slate-50 p-2 text-sm outline-none" placeholder="Corrected text will appear here…" aria-label="Corrected version" />
+                    <textarea
+                      value={corrected}
+                      readOnly
+                      className="h-44 w-full resize-none rounded-lg bg-slate-50 p-2 text-sm outline-none"
+                      placeholder="Corrected text will appear here…"
+                      aria-label="Corrected version"
+                    />
                     <div className="mt-2 flex gap-2">
-                      <button type="button" onClick={() => setAnswerText(corrected)} disabled={!corrected} className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50">Use as answer</button>
-                      <button type="button" onClick={() => navigator.clipboard.writeText(corrected)} disabled={!corrected} className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50">Copy</button>
+                      <button
+                        type="button"
+                        onClick={() => setAnswerText(corrected)}
+                        disabled={!corrected}
+                        className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50"
+                      >
+                        Use as answer
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard.writeText(corrected)}
+                        disabled={!corrected}
+                        className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50"
+                      >
+                        Copy
+                      </button>
                     </div>
                   </div>
 
                   <div className="rounded-xl border p-3">
                     <div className="mb-1 text-xs font-semibold text-slate-700">Grammar Issues &amp; Explanations</div>
-                    <textarea value={feedback} readOnly className="h-44 w-full resize-none rounded-lg bg-slate-50 p-2 text-sm outline-none" placeholder="AI feedback will appear here…" aria-label="AI feedback" />
+                    <textarea
+                      value={feedback}
+                      readOnly
+                      className="h-44 w-full resize-none rounded-lg bg-slate-50 p-2 text-sm outline-none"
+                      placeholder="AI feedback will appear here…"
+                      aria-label="AI feedback"
+                    />
                   </div>
 
                   <div className="rounded-xl border p-3">
                     <div className="mb-1 text-xs font-semibold text-slate-700">Tips</div>
-                    <textarea value={tipsText} readOnly className="h-36 w-full resize-none rounded-lg bg-slate-50 p-2 text-sm outline-none" placeholder="No tips yet." aria-label="AI tips" />
+                    <textarea
+                      value={tipsText}
+                      readOnly
+                      className="h-36 w-full resize-none rounded-lg bg-slate-50 p-2 text-sm outline-none"
+                      placeholder="No tips yet."
+                      aria-label="AI tips"
+                    />
                   </div>
                 </div>
               </div>
@@ -1316,9 +1581,7 @@ export default function AssignmentView({
                   <div className="text-sm text-slate-500">You haven’t submitted anything yet.</div>
                 ) : (
                   <div className="space-y-3">
-                    <div className="text-xs text-slate-500">
-                      Submitted: {fmtDateTime(mySubmission.submitted_at)}
-                    </div>
+                    <div className="text-xs text-slate-500">Submitted: {fmtDateTime(mySubmission.submitted_at)}</div>
 
                     {mySubmission.answer_text?.trim() ? (
                       <div className="rounded-lg border bg-slate-50 p-3 text-sm whitespace-pre-wrap">
@@ -1334,7 +1597,7 @@ export default function AssignmentView({
 
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800 min-w-0">
-                <DocumentTextIcon className="h-5 w-5 shrink-0" aria-hidden="true" /> 
+                <DocumentTextIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
                 <span className="truncate">Preview</span>
               </div>
               {displayName ? (
@@ -1349,13 +1612,21 @@ export default function AssignmentView({
             </div>
 
             {err ? (
-              <div role="alert" aria-live="polite" className="mt-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              <div
+                role="alert"
+                aria-live="polite"
+                className="mt-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
+              >
                 <InformationCircleIcon className="mt-0.5 h-5 w-5" aria-hidden="true" />
                 <span>{err}</span>
               </div>
             ) : null}
             {okMsg ? (
-              <div role="status" aria-live="polite" className="mt-3 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              <div
+                role="status"
+                aria-live="polite"
+                className="mt-3 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
+              >
                 <CheckCircleIcon className="mt-0.5 h-5 w-5" aria-hidden="true" />
                 <span>{okMsg}</span>
               </div>
@@ -1372,9 +1643,7 @@ export default function AssignmentView({
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 min-w-0">
                       <UsersIcon className="h-5 w-5 text-slate-600 shrink-0" aria-hidden="true" />
-                      <h3 className="text-sm font-semibold text-slate-900 truncate">
-                        Submission Status
-                      </h3>
+                      <h3 className="text-sm font-semibold text-slate-900 truncate">Submission Status</h3>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-600/20">
@@ -1420,15 +1689,15 @@ export default function AssignmentView({
                     </div>
                     <select
                       value={sectionFilter === "ALL" ? "ALL" : String(sectionFilter)}
-                      onChange={(e) =>
-                        setSectionFilter(e.target.value === "ALL" ? "ALL" : Number(e.target.value))
-                      }
+                      onChange={(e) => setSectionFilter(e.target.value === "ALL" ? "ALL" : Number(e.target.value))}
                       className="rounded-md border px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
                       aria-label="Filter by section"
                     >
                       <option value="ALL">All sections</option>
                       {sectionOptions.map(([id, name]) => (
-                        <option key={id} value={id}>{name || `Section ${id}`}</option>
+                        <option key={id} value={id}>
+                          {name || `Section ${id}`}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -1473,17 +1742,25 @@ export default function AssignmentView({
                             )}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium text-slate-800">{fullName(s) || "Unnamed Student"}</div>
+                            <div className="truncate text-sm font-medium text-slate-800">
+                              {fullName(s) || "Unnamed Student"}
+                            </div>
                             <div className="text-xs text-slate-500">{s.section_name ? s.section_name : "No section"}</div>
                           </div>
                           <div className="flex items-center gap-2">
                             {submitted ? (
-                              <span className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20" title="Student has submitted">
+                              <span
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20"
+                                title="Student has submitted"
+                              >
                                 <CheckCircleSolid className="h-4 w-4" aria-hidden="true" />
                                 Submitted
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-rose-50 text-rose-700 ring-1 ring-rose-600/20" title="Student has not submitted">
+                              <span
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-rose-50 text-rose-700 ring-1 ring-rose-600/20"
+                                title="Student has not submitted"
+                              >
                                 <XCircleIcon className="h-4 w-4" aria-hidden="true" />
                                 Not submitted
                               </span>
