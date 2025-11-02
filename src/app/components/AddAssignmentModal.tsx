@@ -825,16 +825,7 @@ export default function AddAssignmentModal({
                   >
                     {isPrivate ? "Switch to Standard" : "Make Private"}
                   </button>
-                  {isPrivate && (
-                    <button
-                      type="button"
-                      onClick={() => setPickOpen(true)}
-                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-gray-50"
-                    >
-                      <UserGroupIcon className="w-4 h-4" />
-                      {preSelectedStudentIds.length ? "Edit students" : "Choose students (optional)"}
-                    </button>
-                  )}
+                  
                   {isPrivate && preSelectedStudentIds.length > 0 && (
                     <span className="text-xs text-indigo-700">{preSelectedStudentIds.length} selected</span>
                   )}
