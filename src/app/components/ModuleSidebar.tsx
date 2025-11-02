@@ -1,7 +1,7 @@
 // /src/app/components/ModuleSidebar.tsx
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   ChevronDoubleLeftIcon,
   ChevronDoubleRightIcon,
@@ -35,6 +35,9 @@ interface Assignment {
   name: string;
   instruction: string;
   file_url?: string | null;
+  module_id?: string;
+  /** used for student-side visibility badge/filter */
+  is_private?: boolean | null;
 }
 type YTLink = {
   id: string;
@@ -54,10 +57,10 @@ interface ModuleSidebarProps {
   setSelectedFileId: (id: string | null) => void;
   youtube_url?: string;
   onUploadClick: () => void;
-  onAddAssignmentClick: () => void;
+  onAddAssignmentClick: () => void; // parent controls inline viewer
   moduleId: string;
   setResources: (res: Resource[]) => void;
-  assignments: Assignment[];
+  assignments: Assignment[]; // initial list from page
   setAssignmentView: (assignment: Assignment | null) => void;
   onAddYouTubeLinkClick: () => void;
 }
@@ -92,7 +95,7 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
     onAddAssignmentClick,
     moduleId,
     setResources,
-    assignments,
+    assignments, // initial list
     setAssignmentView,
     onAddYouTubeLinkClick,
   } = props;
@@ -119,6 +122,97 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
   const [postPublished, setPostPublished] = useState<boolean>(false);
   const [quizCount, setQuizCount] = useState<number>(0);
 
+  // ---------------- ASSIGNMENTS: live fetch ----------------
+  const [assignmentsLive, setAssignmentsLive] = useState<Assignment[]>(assignments ?? []);
+
+  // keep local list in sync when parent updates (initial render / navigation)
+  useEffect(() => {
+    setAssignmentsLive(assignments ?? []);
+  }, [assignments]);
+
+  /**
+   * Fetch assignments (RLS handles who can see what)
+   * - Teachers/Admins see all of their module's assignments.
+   * - Students see public + the private ones assigned to them (enforced by RLS).
+   */
+  const fetchAssignments = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("assignments")
+        .select("id, name, instruction, module_id, is_private")
+        .eq("module_id", moduleId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("❌ Error fetching assignments (sidebar):", error);
+        setAssignmentsLive([]);
+      } else {
+        setAssignmentsLive((data ?? []) as Assignment[]);
+      }
+    } catch (e) {
+      console.error("❌ Unexpected error fetching assignments (sidebar):", e);
+      setAssignmentsLive([]);
+    }
+  }, [moduleId]);
+
+  // initial fetch + realtime subscription (assignments only)
+  useEffect(() => {
+    fetchAssignments();
+
+    const channel = supabase
+      .channel(`assignments_${moduleId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "assignments", filter: `module_id=eq.${moduleId}` },
+        () => {
+          // refresh after any change
+          fetchAssignments();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [moduleId, fetchAssignments]);
+
+  /* -------------------- FILES (resources): optional live fetch -------------------- */
+  const fetchResources = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("resources")
+        .select("id, file_url, file_name, type")
+        .eq("module_id", moduleId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("❌ Error fetching resources (sidebar):", error.message);
+        return;
+      }
+      setResources((data ?? []) as Resource[]);
+    } catch (e: any) {
+      console.error("❌ Unexpected error fetching resources (sidebar):", e?.message || e);
+    }
+  }, [moduleId, setResources]);
+
+  useEffect(() => {
+    // Keep sidebar in sync even if parent doesn't refetch instantly.
+    fetchResources();
+
+    const resChannel = supabase
+      .channel(`resources_${moduleId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "resources", filter: `module_id=eq.${moduleId}` },
+        () => fetchResources()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(resChannel);
+    };
+  }, [moduleId, fetchResources]);
+
   /* -------------------- YouTube live fetch -------------------- */
   const fetchYouTubeLinks = useCallback(async () => {
     const { data, error } = await supabase
@@ -135,6 +229,21 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
     }
   }, [moduleId]);
 
+  // small optimistic poller that runs briefly after the teacher opens the “Add YouTube” modal.
+  const ytPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const kickYouTubePoll = useCallback(() => {
+    if (ytPollRef.current) clearInterval(ytPollRef.current);
+    let ticks = 0;
+    ytPollRef.current = setInterval(() => {
+      fetchYouTubeLinks();
+      ticks += 1;
+      if (ticks >= 8) {
+        if (ytPollRef.current) clearInterval(ytPollRef.current);
+        ytPollRef.current = null;
+      }
+    }, 1000); // poll ~8s max
+  }, [fetchYouTubeLinks]);
+
   useEffect(() => {
     fetchYouTubeLinks();
 
@@ -149,6 +258,10 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
 
     return () => {
       supabase.removeChannel(channel);
+      if (ytPollRef.current) {
+        clearInterval(ytPollRef.current);
+        ytPollRef.current = null;
+      }
     };
   }, [moduleId, fetchYouTubeLinks]);
 
@@ -257,6 +370,8 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
       setAssignmentView(null);
       setDeletingAssignment(false);
       router.refresh();
+      // refresh live list
+      fetchAssignments();
     } catch (err: any) {
       console.error("❌ delete assignment failed:", err?.message || err);
       alert(err?.message || "Failed to delete assignment. Check RLS and storage path.");
@@ -296,14 +411,17 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
     });
   }, [ytLinks, qNorm]);
 
+  // use locally-fetched assignments first; fall back to parent list
+  const assignmentsSource = assignmentsLive?.length ? assignmentsLive : assignments;
+
   const asgFiltered = useMemo(() => {
-    if (!qNorm) return assignments;
-    return assignments.filter((a) => {
+    if (!qNorm) return assignmentsSource;
+    return assignmentsSource.filter((a) => {
       const t = (a.name || "").toLowerCase();
       const b = (a.instruction || "").toLowerCase();
       return t.includes(qNorm) || b.includes(qNorm);
     });
-  }, [assignments, qNorm]);
+  }, [assignmentsSource, qNorm]);
 
   const countFiles = resFiltered.length;
   const countVideos = ytFiltered.length + (youtube_url ? 1 : 0);
@@ -313,7 +431,7 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
     { key: "files", label: "Files", count: countFiles },
     { key: "videos", label: "Videos", count: countVideos },
     { key: "assignments", label: "Assignments", count: countAssignments },
-    { key: "quizzes", label: "Quizzes", count: prePublished || postPublished || quizCount ? undefined : undefined },
+    { key: "quizzes", label: "Quizzes" },
   ];
 
   /* -------------------- MOBILE: bottom bar + sheet -------------------- */
@@ -339,23 +457,29 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
         </button>
         {/* Add YouTube */}
         <button
-          onClick={onAddYouTubeLinkClick}
+          onClick={() => {
+            onAddYouTubeLinkClick();
+            kickYouTubePoll(); // 🔄 start temporary polling to catch new link immediately
+          }}
           className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50"
           aria-label="Add YouTube link"
           type="button"
         >
           <PlusCircleIcon className="h-4 w-4" />
         </button>
-        {/* Add Assignment */}
+        {/* Add Assignment (call parent + close sheet so inline viewer shows) */}
         <button
-          onClick={onAddAssignmentClick}
+          onClick={() => {
+            onAddAssignmentClick();
+            closeMobile();
+          }}
           className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50"
           aria-label="Add assignment"
           type="button"
         >
           <ClipboardDocumentCheckIcon className="h-4 w-4" />
         </button>
-        {/* ✅ Add Quiz / Test (new) */}
+        {/* Add Quiz / Test */}
         <button
           onClick={() => {
             setAssignmentView(null);
@@ -458,7 +582,10 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
               </h3>
               {role === "teacher" && (
                 <button
-                  onClick={onAddYouTubeLinkClick}
+                  onClick={() => {
+                    onAddYouTubeLinkClick();
+                    kickYouTubePoll(); // 🔄 start temporary polling to catch new link immediately
+                  }}
                   className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 ring-1 ring-indigo-700/30"
                   type="button"
                 >
@@ -537,18 +664,23 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
                 Assignments
               </h3>
 
-              {role === "teacher" && (
-                <button
-                  onClick={onAddAssignmentClick}
-                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 ring-1 ring-emerald-700/30"
-                  title="Add assignment"
-                  aria-label="Add assignment"
-                  type="button"
-                >
-                  <ClipboardDocumentCheckIcon className="h-4 w-4" />
-                  Add
-                </button>
-              )}
+              <div className="flex items-center gap-1">
+                {role === "teacher" && (
+                  <button
+                    onClick={() => {
+                      onAddAssignmentClick();
+                      closeMobile();
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 ring-1 ring-emerald-700/30"
+                    title="Add assignment"
+                    aria-label="Add assignment"
+                    type="button"
+                  >
+                    <ClipboardDocumentCheckIcon className="h-4 w-4" />
+                    Add
+                  </button>
+                )}
+              </div>
             </div>
 
             {asgFiltered.length === 0 ? (
@@ -572,6 +704,11 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
                       <span className="text-slate-800 truncate">
                         {assignment.name?.trim() ? assignment.name : "(No Title)"}
                       </span>
+                      {assignment.is_private ? (
+                        <span className="ml-2 shrink-0 text-[10px] rounded-full px-2 py-0.5 bg-indigo-100 text-indigo-700">
+                          Private
+                        </span>
+                      ) : null}
                     </button>
 
                     {role === "teacher" && (
@@ -653,7 +790,7 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
                   setAssignmentView(null);
                   setSelectedFileId(null);
                   setSelectedView("VIEW_QUIZZES");
-                  closeMobile();
+                  closeMobile()
                 }}
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border bg-white hover:bg-slate-50 border-slate-200 text-sm"
                 type="button"
@@ -744,7 +881,7 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
             <div />
           </div>
 
-          {/* Toolbar: search + pills (overlap-proof) */}
+          {/* Toolbar: search + pills */}
           {isSidebarOpen && (
             <div className="mt-3 space-y-2">
               <div className="grid grid-cols-[1fr_auto] gap-2">
@@ -870,7 +1007,10 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
                 </h3>
                 {role === "teacher" && (
                   <button
-                    onClick={onAddYouTubeLinkClick}
+                    onClick={() => {
+                      onAddYouTubeLinkClick();
+                      kickYouTubePoll(); // 🔄 start temporary polling to catch new link immediately
+                    }}
                     className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 ring-1 ring-indigo-700/30"
                     type="button"
                   >
@@ -939,7 +1079,7 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
             </section>
           )}
 
-          {/* ASSIGNMENTS */}
+          {/* ASSIGNMENTS (desktop) */}
           {isSidebarOpen && (tab === "all" || tab === "assignments") && (
             <section aria-labelledby="assign-head">
               <div className="mb-2 flex items-center justify-between">
@@ -947,18 +1087,20 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
                   Assignments
                 </h3>
 
-                {role === "teacher" && (
-                  <button
-                    onClick={onAddAssignmentClick}
-                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 ring-1 ring-emerald-700/30"
-                    title="Add assignment"
-                    aria-label="Add assignment"
-                    type="button"
-                  >
-                    <ClipboardDocumentCheckIcon className="h-4 w-4" />
-                    Add
-                  </button>
-                )}
+                <div className="flex items-center gap-1">
+                  {role === "teacher" && (
+                    <button
+                      onClick={onAddAssignmentClick}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 ring-1 ring-emerald-700/30"
+                      title="Add assignment"
+                      aria-label="Add assignment"
+                      type="button"
+                    >
+                      <ClipboardDocumentCheckIcon className="h-4 w-4" />
+                      Add
+                    </button>
+                  )}
+                </div>
               </div>
 
               {asgFiltered.length === 0 ? (
@@ -981,6 +1123,11 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
                         <span className="text-slate-800 truncate">
                           {assignment.name?.trim() ? assignment.name : "(No Title)"}
                         </span>
+                        {assignment.is_private ? (
+                          <span className="ml-2 shrink-0 text-[10px] rounded-full px-2 py-0.5 bg-indigo-100 text-indigo-700">
+                            Private
+                          </span>
+                        ) : null}
                       </button>
 
                       {role === "teacher" && (
@@ -1194,25 +1341,16 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
         <div className="pb-[calc(env(safe-area-inset-bottom,0px))]" />
       </nav>
 
-      {/* MOBILE: slide-up sheet */}
+      {/* MOBILE: slide-up sheet (SCROLLABLE) */}
       {mobileOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-50"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Module navigator"
-        >
+        <div className="md:hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Module navigator">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setMobileOpen(false)} aria-hidden="true" />
           <div
-            className="absolute inset-0 bg-black/40"
-            onClick={() => setMobileOpen(false)}
-            aria-hidden="true"
-          />
-          <div
-            className="absolute inset-x-0 bottom-0 max-h-[85dvh] rounded-t-2xl bg-white shadow-2xl ring-1 ring-slate-200"
+            className="absolute inset-x-0 bottom-0 max-h[90dvh] max-h-[90dvh] rounded-t-2xl bg-white shadow-2xl ring-1 ring-slate-200 flex flex-col min-h-0"
             role="document"
           >
             {/* Header */}
-            <div className="sticky top-0 border-b border-slate-200 bg-white/80 backdrop-blur px-4 py-3 flex items-center justify-between gap-2">
+            <div className="border-b border-slate-200 bg-white/80 backdrop-blur px-4 py-3 flex items-center justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <div className="text-xs text-slate-500">Module</div>
                 <div className="text-sm font-semibold text-slate-900 capitalize truncate">{tab}</div>
@@ -1231,7 +1369,53 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
                 </label>
               </div>
 
-              <MobileToolbarActions />
+              {role === "teacher" ? (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={onUploadClick}
+                    className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50"
+                    aria-label="Add file"
+                    type="button"
+                  >
+                    <ArrowUpOnSquareIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      onAddYouTubeLinkClick();
+                      kickYouTubePoll(); // 🔄 start temporary polling to catch new link immediately
+                    }}
+                    className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50"
+                    aria-label="Add YouTube link"
+                    type="button"
+                  >
+                    <PlusCircleIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      onAddAssignmentClick();
+                      setMobileOpen(false);
+                    }}
+                    className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50"
+                    aria-label="Add assignment"
+                    type="button"
+                  >
+                    <ClipboardDocumentCheckIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAssignmentView(null);
+                      setSelectedFileId(null);
+                      setSelectedView("ADD_QUIZ");
+                      setMobileOpen(false);
+                    }}
+                    className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50"
+                    aria-label="Add quiz or test"
+                    type="button"
+                  >
+                    <ClipboardDocumentListIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : null}
 
               <button
                 type="button"
@@ -1244,7 +1428,10 @@ export default function ModuleSidebar(props: ModuleSidebarProps) {
             </div>
 
             {/* Body */}
-            <div className="overflow-y-auto p-4 space-y-4">
+            <div
+              className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-4"
+              style={{ WebkitOverflowScrolling: "touch" }}
+            >
               {renderMobileSection()}
               <div className="h-2" />
             </div>
