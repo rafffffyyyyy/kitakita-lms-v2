@@ -778,8 +778,8 @@ function ModuleProgressPane({ roster }: { roster: RosterStudentWithAvatar[] }) {
         {/* Points summary */}
         <span className="inline-flex items-center gap-1">
           <span className="ml-3">• Points:</span>
-          <span className="rounded-md bg-white px-2 py-0.5 border border-neutral-200">Quiz: {pointTotals.quizPts}</span>
-          <span className="rounded-md bg-white px-2 py-0.5 border border-neutral-200">Assign: {pointTotals.asgPts}</span>
+          <span className="rounded-md bg-white px-2 py-0.5 border border-neutral-200">Quizzes: {pointTotals.quizPts}</span>
+          <span className="rounded-md bg-white px-2 py-0.5 border border-neutral-200">Assignments: {pointTotals.asgPts}</span>
           <span className="rounded-md bg-white px-2 py-0.5 border border-neutral-200 font-medium">
             Total: {pointTotals.grandPts}
           </span>
