@@ -2,6 +2,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   XMarkIcon,
   DocumentArrowUpIcon,
@@ -204,7 +205,7 @@ function PickStudentsSheet({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
+    <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div className="relative w-full sm:w-[720px] max-h-[85vh] bg-white rounded-2xl shadow-xl overflow-hidden">
         {/* Header */}
@@ -359,6 +360,16 @@ export default function AddAssignmentModal({
       try { inflight.current?.abort(); } catch {}
     };
   }, []);
+
+  // lock background scroll when showing as modal
+  useEffect(() => {
+    if (inline) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [inline]);
 
   const canSubmit = useMemo(
     () => !loading && name.trim() && instruction.trim() && maxScore.trim(),
@@ -949,23 +960,21 @@ export default function AddAssignmentModal({
     );
   }
 
-  return (
-    <div
-      className="pointer-events-auto w-full sm:max-w-2xl md:max-w-3xl overflow-hidden rounded-xl sm:rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200 max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)] flex flex-col"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="add-assignment-title"
-    >
-      <div className="pointer-events-none flex min-h-dvh w-full items-start justify-center overflow-y-auto p-4 sm:items-center sm:p-6">
-        <div
-          className={[
-            "pointer-events-auto w-full sm:max-w-2xl md:max-w-3xl",
-            "rounded-none sm:rounded-2xl bg-white shadow-xl ring-1 ring-slate-200",
-            "max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]",
-            "flex flex-col",
-          ].join(" ")}
-        >
-          {content}
+  // Modal version: fixed overlay + portal to body
+  return createPortal(
+    <div className="fixed inset-0 z-[80]">
+      <div
+        className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px]"
+        onClick={() => !loading && closeModal()}
+      />
+      <div className="absolute inset-0 overflow-auto">
+        <div className="min-h-full w-full flex items-start sm:items-center justify-center p-4 sm:p-6">
+          <div
+            className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200
+                       max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)] flex flex-col"
+          >
+            {content}
+          </div>
         </div>
       </div>
 
@@ -977,6 +986,7 @@ export default function AddAssignmentModal({
           onChange={setPreSelectedStudentIds}
         />
       )}
-    </div>
+    </div>,
+    document.body
   );
 }
