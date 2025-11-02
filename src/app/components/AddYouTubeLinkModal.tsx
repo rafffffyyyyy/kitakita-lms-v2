@@ -1,3 +1,4 @@
+// /src/app/components/AddYouTubeLinkModal.tsx
 "use client";
 
 import { useMemo, useState } from "react";
@@ -9,6 +10,7 @@ import {
   InformationCircleIcon,
   CheckBadgeIcon,
 } from "@heroicons/react/24/outline";
+import { useRouter } from "next/navigation"; // ✅ NEW
 
 interface Props {
   open: boolean;
@@ -24,8 +26,10 @@ const isValidYouTubeUrl = (raw: string) => {
     if (host === "youtu.be") return u.pathname.length > 1;
     if (host === "youtube.com") {
       return (
-        u.pathname.startsWith("/watch") && !!u.searchParams.get("v")
-      ) || u.pathname.startsWith("/shorts/") || u.pathname.startsWith("/embed/");
+        (u.pathname.startsWith("/watch") && !!u.searchParams.get("v")) ||
+        u.pathname.startsWith("/shorts/") ||
+        u.pathname.startsWith("/embed/")
+      );
     }
     return false;
   } catch {
@@ -39,6 +43,7 @@ export default function AddYouTubeLinkModal({ open, onClose, moduleId, onAdded }
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
+  const router = useRouter(); // ✅ NEW
 
   const urlOk = useMemo(() => isValidYouTubeUrl(url.trim()), [url]);
 
@@ -58,8 +63,11 @@ export default function AddYouTubeLinkModal({ open, onClose, moduleId, onAdded }
         youtubeUrl: url.trim(),
         title: title.trim() || undefined,
       });
+
       setOk(true);
-      onAdded();
+      onAdded();          // keep existing parent hook
+      router.refresh();   // ✅ NEW: force re-render so sidebar updates immediately
+
       // small delay so users can see the success state
       setTimeout(() => {
         setOk(false);
