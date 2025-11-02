@@ -1,7 +1,7 @@
 // /app/modules/[moduleId]/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -20,11 +20,13 @@ import PosttestViewer from "@/app/components/viewers/PosttestViewer";
 import QuizViewer from "@/app/components/viewers/QuizViewer";
 import AddQuiz from "@/app/components/AddQuiz";
 
-// Icons for inline Add Assignment
+// New add-assignment (inline-capable)
+import AddAssignmentModal from "@/app/components/AddAssignmentModal";
+
+// Icons used only by legacy inline form
 import {
   ClipboardDocumentCheckIcon,
   DocumentArrowUpIcon,
-  XMarkIcon,
   TrashIcon,
   ArrowUturnLeftIcon,
   CheckCircleIcon,
@@ -63,7 +65,7 @@ const ASSIGN_FILE_ALLOWED = [".pdf", ".doc", ".docx", ".ppt", ".pptx"];
 const ASSIGN_FILE_MAX_MB = 20;
 
 /* ----------------------------------------------------------------- */
-/* Inline Add Assignment (same payload & endpoint as your modal)     */
+/* Legacy Inline Add Assignment (left intact; not used by default)   */
 /* ----------------------------------------------------------------- */
 function AddAssignmentInline({
   moduleId,
@@ -95,8 +97,7 @@ function AddAssignmentInline({
     firstInputRef.current?.focus();
   }, []);
 
-  const canSubmit =
-    !saving && name.trim() && instruction.trim() && maxScore.trim();
+  const canSubmit = !saving && name.trim() && instruction.trim() && maxScore.trim();
 
   const validateFile = (f: File) => {
     const ext = `.${(f.name.split(".").pop() || "").toLowerCase()}`;
@@ -120,7 +121,6 @@ function AddAssignmentInline({
       setError(null);
       setFile(f);
     }
-    // allow re-pick same file
     e.currentTarget.value = "";
   };
 
@@ -133,7 +133,6 @@ function AddAssignmentInline({
     e.preventDefault();
     if (!canSubmit) return;
 
-    // date sanity
     if (availableFrom && dueAt) {
       const from = new Date(availableFrom);
       const to = new Date(dueAt);
@@ -147,7 +146,7 @@ function AddAssignmentInline({
     setError(null);
     setProgress(20);
     try {
-      const [{ data: user }, { data: session }] = await Promise.all([
+      const [{ data: _user }, { data: session }] = await Promise.all([
         supabase.auth.getUser(),
         supabase.auth.getSession(),
       ]);
@@ -173,19 +172,15 @@ function AddAssignmentInline({
       let json: any = null;
       try {
         json = txt ? JSON.parse(txt) : null;
-      } catch {
-        /* noop */
-      }
+      } catch {}
+
       if (!res.ok || (json && json.ok === false)) {
         throw new Error(json?.error || json?.message || txt || "Failed to add assignment.");
       }
 
       setProgress(100);
       setSuccess("Assignment created successfully.");
-      // small delay so teacher can see the toast
-      setTimeout(() => {
-        onDone();
-      }, 900);
+      setTimeout(() => onDone(), 900);
     } catch (err: any) {
       setError(err?.message || "Failed to add assignment.");
     } finally {
@@ -195,7 +190,6 @@ function AddAssignmentInline({
 
   return (
     <div className="mx-auto max-w-5xl">
-      {/* success toast */}
       {success && (
         <div className="fixed inset-x-0 top-4 z-40 flex justify-center px-4" aria-live="polite">
           <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800 shadow">
@@ -206,10 +200,7 @@ function AddAssignmentInline({
       )}
       <header className="mb-4 flex items-center justify-between">
         <h1 className="text-lg font-semibold text-slate-900">Add Assignment</h1>
-        <button
-          onClick={onCancel}
-          className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-slate-50"
-        >
+        <button onClick={onCancel} className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-slate-50">
           <ArrowUturnLeftIcon className="h-5 w-5" />
           Back
         </button>
@@ -301,9 +292,7 @@ function AddAssignmentInline({
                 onChange={(e) => setDueAt(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200"
               />
-              <p className="mt-1 text-xs text-slate-500">
-                Submissions outside this window are blocked by the database.
-              </p>
+              <p className="mt-1 text-xs text-slate-500">Submissions outside this window are blocked by the database.</p>
             </div>
           </div>
 
@@ -324,9 +313,7 @@ function AddAssignmentInline({
                 title="Click to upload or drag & drop"
               >
                 <DocumentArrowUpIcon className="h-6 w-6 text-slate-500" />
-                <span className="truncate">
-                  {file ? file.name : "Click to upload or drag & drop"}
-                </span>
+                <span className="truncate">{file ? file.name : "Click to upload or drag & drop"}</span>
               </label>
               <p className="mt-1 text-xs text-slate-400">
                 Allowed: {ASSIGN_FILE_ALLOWED.join(", ")} • up to {ASSIGN_FILE_MAX_MB}MB
@@ -377,39 +364,37 @@ function AddAssignmentInline({
 
 /* ------------------------------- Page ------------------------------ */
 export default function ModulePage() {
-  // Resolve dynamic route
   const params = useParams();
   const moduleId = Array.isArray(params?.moduleId)
     ? (params.moduleId[0] as string)
     : ((params?.moduleId as string) || "");
 
-  // Data
   const [module, setModule] = useState<Module | null>(null);
   const [resources, setResources] = useState<Resource[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [assignmentFiles, setAssignmentFiles] = useState<AssignmentFile[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Viewer state
-  // "VIEW_PRETEST" | "VIEW_POSTTEST" | "VIEW_QUIZZES" | "ADD_QUIZ" | "ADD_ASSIGNMENT" | (file url)
+  // viewer state
   const [selectedView, setSelectedView] = useState<string | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [assignmentView, setAssignmentView] = useState<Assignment | null>(null);
 
-  // UI
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  // inline add-assignment flag
+  const [showAddAssignment, setShowAddAssignment] = useState(false);
+
+  // ✅ Missing states added
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isAddYTModalOpen, setIsAddYTModalOpen] = useState(false);
 
   const { role } = useUser(); // reserved
 
-  // Fetchers
+  // fetchers
   const fetchResources = async () => {
     const { data } = await supabase
       .from("resources")
       .select("id, file_url, type, file_name")
       .eq("module_id", moduleId);
-
     setResources(data ?? []);
   };
 
@@ -425,15 +410,37 @@ export default function ModulePage() {
     const { data: assign, error: assignError } = await supabase
       .from("assignments")
       .select("id, name, instruction, module_id")
-      .eq("module_id", moduleId);
+      .eq("module_id", moduleId)
+      .order("created_at", { ascending: false });
 
-    const { data: files, error: fileError } = await supabase
-      .from("assignment_files")
-      .select("assignment_id, file_url");
+    let files: AssignmentFile[] = [];
+    let fileError: any = null;
+    try {
+      const ids = (assign ?? []).map((a) => a.id);
+      if (ids.length) {
+        const { data: af, error: afErr } = await supabase
+          .from("assignment_files")
+          .select("assignment_id, file_url")
+          .in("assignment_id", ids);
+        if (afErr) fileError = afErr;
+        files = (af ?? []) as AssignmentFile[];
+      } else {
+        files = [];
+      }
+    } catch (e) {
+      fileError = e;
+      files = [];
+    }
 
     if (modError) console.error("❌ Error fetching module:", modError);
-    if (assignError) console.error("❌ Error fetching assignments:", assignError);
-    if (fileError) console.error("❌ Error fetching assignment files:", fileError);
+    if (assignError) {
+      console.error("❌ Error fetching assignments:", assignError);
+      try { console.error("…details:", JSON.stringify(assignError)); } catch {}
+    }
+    if (fileError) {
+      console.error("❌ Error fetching assignment files:", fileError);
+      try { console.error("…details:", JSON.stringify(fileError)); } catch {}
+    }
 
     setModule(mod ?? null);
     setAssignments(assign ?? []);
@@ -447,6 +454,7 @@ export default function ModulePage() {
     setSelectedView(null);
     setAssignmentView(null);
     setSelectedFileId(null);
+    setShowAddAssignment(false);
     fetchModuleData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moduleId]);
@@ -471,25 +479,25 @@ export default function ModulePage() {
 
   /* ----------------------------- UI ------------------------------ */
   return (
-    // UI-only: add bottom padding on small screens so the fixed mobile bottom nav (in ModuleSidebar)
-    // never overlaps page content.
     <div className="min-h-screen bg-slate-50 flex md:pb-0 pb-[calc(env(safe-area-inset-bottom,0px)+64px)]">
-      {/* LEFT: Sidebar (desktop/tablet visible; mobile hidden inside the component) */}
+      {/* LEFT: Sidebar */}
       <ModuleSidebar
-        isSidebarOpen={isSidebarOpen}
-        onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
+        isSidebarOpen
+        onToggle={() => {}}
         resources={resources}
         selectedFileId={selectedFileId}
         setSelectedView={(v) => {
           setSelectedView(v);
           setAssignmentView(null);
+          setShowAddAssignment(false);
         }}
         setSelectedFileId={setSelectedFileId}
         youtube_url={module?.youtube_url ?? undefined}
-        // ⬇️ now opens inline builder instead of modal
+        // Open the NEW inline view
         onAddAssignmentClick={() => {
-          setSelectedView("ADD_ASSIGNMENT");
+          setShowAddAssignment(true);
           setAssignmentView(null);
+          setSelectedView(null);
           setSelectedFileId(null);
         }}
         onUploadClick={() => setIsUploadModalOpen(true)}
@@ -499,22 +507,35 @@ export default function ModulePage() {
         setAssignmentView={(a) => {
           setAssignmentView(a);
           setSelectedView(null);
+          setShowAddAssignment(false);
           setSelectedFileId(null);
         }}
         onAddYouTubeLinkClick={() => setIsAddYTModalOpen(true)}
       />
 
-      {/* RIGHT: Header + Inline Viewer */}
+      {/* RIGHT: Header + Viewer */}
       <div className="flex-1 min-w-0 px-4 md:px-6 lg:pr-8 py-6 flex flex-col gap-6">
-        {/* Header */}
         <div className="min-w-0">
           {loading ? <HeaderSkeleton /> : module && <ModuleHeader title={module.title} />}
         </div>
 
-        {/* Viewer */}
-        <div className="flex-1 min-h-[480px] min-w-0 mb-20 md:mb-0">
+        {/* Main viewer area */}
+        <div className="flex-1 min-h-0 min-w-0 mb-20 md:mb-0 overflow-y-auto px-2 sm:px-4">
           {loading ? (
             <ViewerSkeleton />
+          ) : showAddAssignment ? (
+            // ✅ Centered canvas + internal scrollbar (matches Add Quiz feel)
+            <div className="mx-auto w-full max-w-[1200px]">
+              <AddAssignmentModal
+                inline
+                moduleId={moduleId}
+                closeModal={() => setShowAddAssignment(false)}
+                onAssignmentAdded={() => {
+                  setShowAddAssignment(false);
+                  fetchModuleData();
+                }}
+              />
+            </div>
           ) : assignmentView ? (
             <AssignmentView assignmentId={assignmentView.id} moduleId={moduleId} onSubmitted={fetchModuleData} />
           ) : selectedView === "VIEW_PRETEST" ? (
@@ -526,14 +547,18 @@ export default function ModulePage() {
           ) : selectedView === "ADD_QUIZ" ? (
             <AddQuiz moduleId={moduleId} />
           ) : selectedView === "ADD_ASSIGNMENT" ? (
-            <AddAssignmentInline
-              moduleId={moduleId}
-              onDone={() => {
-                setSelectedView(null);
-                fetchModuleData();
-              }}
-              onCancel={() => setSelectedView(null)}
-            />
+            // Fallback for any legacy code paths: show the NEW inline add-assignment centered
+            <div className="mx-auto w-full max-w-[1200px]">
+              <AddAssignmentModal
+                inline
+                moduleId={moduleId}
+                closeModal={() => setSelectedView(null)}
+                onAssignmentAdded={() => {
+                  setSelectedView(null);
+                  fetchModuleData();
+                }}
+              />
+            </div>
           ) : (
             <ModuleViewer
               src={selectedView}
@@ -545,7 +570,7 @@ export default function ModulePage() {
         </div>
       </div>
 
-      {/* ======= ACTION MODALS (kept) ======= */}
+      {/* Modals */}
       {isUploadModalOpen && (
         <UploadFileModal
           moduleId={moduleId}
