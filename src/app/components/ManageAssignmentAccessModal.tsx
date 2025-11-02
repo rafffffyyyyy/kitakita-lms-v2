@@ -328,7 +328,3 @@ export default function ManageAssignmentAccessModal(props: Props) {
     </div>
   );
 }
-<<<<<<< HEAD
-
-=======
->>>>>>> a949144 (feat: ManageAssignmentAccessModal + assignment/notification UI updates)
