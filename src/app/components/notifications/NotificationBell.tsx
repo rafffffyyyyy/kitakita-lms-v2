@@ -256,27 +256,23 @@ export default function NotificationBell() {
       </button>
 
       {open && (
-        /**
-         * Mobile & Tablet (＜lg): full-screen overlay, panel centered.
-         * ≥lg: popover under the bell (original behavior).
-         */
-        <div
-          className="
-            fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4
-            lg:absolute lg:inset-auto lg:right-0 lg:top-full lg:mt-2 lg:bg-transparent lg:block lg:p-0
-          "
-          role="dialog"
-          aria-modal="true"
-          aria-label="Notifications panel"
-          onClick={() => setOpen(false)} // click outside to close
-        >
+        <>
+          {/* Mobile scrim (tap to close) */}
           <div
-            className="w-full max-w-lg lg:max-w-[92vw] lg:w-[26rem]"
-            onClick={(e) => e.stopPropagation()} // keep clicks inside
-          >
-            <NotificationsPanel onClose={() => setOpen(false)} upstreamLogs={bellLogsRef} isOpen={open} />
+            className="fixed inset-0 z-[60] bg-black/30 backdrop-blur-[1px] lg:hidden"
+            aria-hidden="true"
+            onClick={() => setOpen(false)}
+          />
+
+          {/* Unified wrapper:
+              - Mobile: fixed overlay centered
+              - Desktop: anchored popover to the bell (right aligned) */}
+          <div className="fixed inset-0 z-[61] grid place-items-center p-3 lg:absolute lg:inset-auto lg:right-0 lg:top-full lg:z-[60] lg:mt-2 lg:block lg:p-0">
+            <div className="w-full max-w-[92vw] sm:max-w-sm lg:w-[26rem] lg:max-w-[92vw]">
+              <NotificationsPanel onClose={() => setOpen(false)} upstreamLogs={bellLogsRef} isOpen={open} />
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
@@ -641,6 +637,7 @@ function NotificationsPanel({
     }
   };
 
+  // CHANGED: hard delete (DELETE) instead of soft-delete
   const deleteAll = async () => {
     setBusy(true);
     const prev = rows;
@@ -650,18 +647,12 @@ function NotificationsPanel({
       const uid = await getUid();
       if (!uid) return;
 
-      await Promise.all([
-        supabase
-          .from("notifications")
-          .update({ deleted_at: new Date().toISOString() })
-          .eq("recipient_user_id", uid)
-          .is("deleted_at", null),
-        supabase
-          .from("notifications")
-          .update({ deleted_at: new Date().toISOString() })
-          .eq("user_id", uid)
-          .is("deleted_at", null),
+      const [{ error: e1 }, { error: e2 }] = await Promise.all([
+        supabase.from("notifications").delete().eq("recipient_user_id", uid),
+        supabase.from("notifications").delete().eq("user_id", uid),
       ]);
+
+      if (e1 || e2) throw e1 || e2;
 
       await load();
       dispatchRefresh();
@@ -687,13 +678,14 @@ function NotificationsPanel({
     dispatchRefresh();
   };
 
+  // CHANGED: hard delete (DELETE) instead of soft-delete
   const deleteOne = async (id: string) => {
     const prev = rows;
     setRows((xs) => xs.filter((r) => r.id !== id));
-    const call = await supabase.from("notifications").update({ deleted_at: new Date().toISOString() }).eq("id", id);
-    if (call.error) {
+    const { error } = await supabase.from("notifications").delete().eq("id", id);
+    if (error) {
       setRows(prev);
-      log("deleteOne failed", call.error);
+      log("deleteOne failed", error);
     } else {
       await load();
     }
@@ -1168,7 +1160,7 @@ function DebugPanel({
   }, [setState]);
 
   return createPortal(
-    <div className="fixed inset-0 z-[95] grid place-items-center bg-black/40 p-4">
+    <div className="fixed inset-0 z[95] grid place-items-center bg-black/40 p-4">
       <div className="w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5">
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
           <div className="flex items-center gap-2">
