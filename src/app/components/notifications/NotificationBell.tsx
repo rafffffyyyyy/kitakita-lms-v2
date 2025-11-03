@@ -20,8 +20,6 @@ import {
   InformationCircleIcon,
   CheckBadgeIcon,
   LockClosedIcon,
-  BugAntIcon,
-  ArrowPathIcon,
 } from "@heroicons/react/24/outline";
 
 /* ------------------------------- Types ------------------------------- */
@@ -46,7 +44,8 @@ type MetaPiece = {
   score?: number | null;
 };
 
-const cx = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(" ");
+const cx = (...xs: (string | false | null | undefined)[]) =>
+  xs.filter(Boolean).join(" ");
 
 const iconForType: Record<string, ElementType> = {
   // assignment core
@@ -90,7 +89,12 @@ const prettyQuizType = (t?: string | null) =>
 /* ------------------- Payload/meta helpers (lenient) ------------------ */
 const extractMetaFromPayload = (p: any) => {
   const mod =
-    p?.module_title ?? p?.module_name ?? p?.module?.title ?? p?.moduleTitle ?? p?.moduleName ?? null;
+    p?.module_title ??
+    p?.module_name ??
+    p?.module?.title ??
+    p?.moduleTitle ??
+    p?.moduleName ??
+    null;
   const qtr = p?.quarter_name ?? p?.quarter?.name ?? p?.quarterName ?? null;
 
   const quizTitle = p?.quiz_title ?? p?.quiz?.title ?? null;
@@ -127,7 +131,9 @@ function assignmentIdFromLink(link?: string | null, payload?: any): string | nul
   } catch {
     const m =
       link.match(/[?&](assignment|assignmentId|assignment_id)=([0-9a-f-]{36})/i) ||
-      link.match(/\/assignments\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+      link.match(
+        /\/assignments\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i
+      );
     return m ? (m[m.length - 1] as string) : null;
   }
 }
@@ -147,7 +153,9 @@ function quizIdFromLink(link?: string | null, payload?: any): string | null {
   } catch {
     const m =
       link.match(/[?&](quizId|quiz_id)=([0-9a-f-]{36})/i) ||
-      link.match(/\/quizzes\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+      link.match(
+        /\/quizzes\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i
+      );
     return m ? (m[m.length - 1] as string) : null;
   }
 }
@@ -157,21 +165,12 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [unread, setUnread] = useState(0);
 
-  const bellLogsRef = useRef<string[]>([]);
-  const bellLog = (msg: string, data?: any) => {
-    const line =
-      `[${new Date().toLocaleTimeString()}] ${msg}` + (data !== undefined ? ` — ${safeJson(data)}` : "");
-    bellLogsRef.current = [line, ...bellLogsRef.current].slice(0, 200);
-    // eslint-disable-next-line no-console
-    console.log("[notif-bell]", msg, data ?? "");
-  };
-
   const recountUnread = useCallback(async () => {
     const { data: auth } = await supabase.auth.getUser();
     const uid = auth.user?.id;
     if (!uid) return;
 
-    const [{ count: c1, error: e1 }, { count: c2, error: e2 }] = await Promise.all([
+    const [{ count: c1 }, { count: c2 }] = await Promise.all([
       supabase
         .from("notifications")
         .select("id", { head: true, count: "exact" })
@@ -186,10 +185,7 @@ export default function NotificationBell() {
         .is("read_at", null),
     ]);
 
-    if (e1) bellLog("recountUnread recipient error", e1);
-    if (e2) bellLog("recountUnread user error", e2);
     setUnread((c1 ?? 0) + (c2 ?? 0));
-    bellLog("recountUnread", { uid, count: (c1 ?? 0) + (c2 ?? 0) });
   }, []);
 
   useEffect(() => {
@@ -269,7 +265,7 @@ export default function NotificationBell() {
               - Desktop: anchored popover to the bell (right aligned) */}
           <div className="fixed inset-0 z-[61] grid place-items-center p-3 lg:absolute lg:inset-auto lg:right-0 lg:top-full lg:z-[60] lg:mt-2 lg:block lg:p-0">
             <div className="w-full max-w-[92vw] sm:max-w-sm lg:w-[26rem] lg:max-w-[92vw]">
-              <NotificationsPanel onClose={() => setOpen(false)} upstreamLogs={bellLogsRef} isOpen={open} />
+              <NotificationsPanel onClose={() => setOpen(false)} isOpen={open} />
             </div>
           </div>
         </>
@@ -281,41 +277,22 @@ export default function NotificationBell() {
 /* ------------------------------ Panel -------------------------------- */
 function NotificationsPanel({
   onClose,
-  upstreamLogs,
   isOpen,
 }: {
   onClose: () => void;
-  upstreamLogs: React.MutableRefObject<string[]>;
   isOpen: boolean;
 }) {
   const [rows, setRows] = useState<NotifRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [confirmDlg, setConfirmDlg] = useState<null | { mode: "one"; id: string; title?: string } | { mode: "all" }>(
-    null
-  );
+  const [confirmDlg, setConfirmDlg] = useState<
+    null | { mode: "one"; id: string; title?: string } | { mode: "all" }
+  >(null);
 
   const [metaById, setMetaById] = useState<Record<string, MetaPiece>>({});
-  const [debugOpen, setDebugOpen] = useState(false);
-  const [debug, setDebug] = useState<{
-    uid?: string | null;
-    email?: string | null;
-    count_recipient?: number | null;
-    count_user?: number | null;
-    count_visible?: number | null;
-    sample?: any[];
-    logs: string[];
-  }>({ logs: [] });
 
-  const log = (msg: string, data?: any) => {
-    const line =
-      `[${new Date().toLocaleTimeString()}] ${msg}` + (data !== undefined ? ` — ${safeJson(data)}` : "");
-    setDebug((d) => ({ ...d, logs: [line, ...d.logs].slice(0, 200) }));
-    // eslint-disable-next-line no-console
-    console.log("[notif-panel]", msg, data ?? "");
-  };
-
-  const dispatchRefresh = () => setTimeout(() => window.dispatchEvent(new CustomEvent("notif:refresh")), 0);
+  const dispatchRefresh = () =>
+    setTimeout(() => window.dispatchEvent(new CustomEvent("notif:refresh")), 0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -329,7 +306,7 @@ function NotificationsPanel({
 
     const columns = "id,type,title,body,link_path,payload,created_at,read_at,deleted_at";
 
-    const [{ data: a, error: ea }, { data: b, error: eb }] = await Promise.all([
+    const [{ data: a }, { data: b }] = await Promise.all([
       supabase
         .from("notifications")
         .select(columns)
@@ -346,14 +323,12 @@ function NotificationsPanel({
         .limit(120),
     ]);
 
-    if (ea) log("load recipient error", ea);
-    if (eb) log("load user error", eb);
-
     const merged = [...(a ?? []), ...(b ?? [])] as NotifRow[];
     const uniqMap = new Map<string, NotifRow>();
     for (const r of merged) uniqMap.set(r.id, r);
     const list = Array.from(uniqMap.values()).sort(
-      (x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime()
+      (x, y) =>
+        new Date(y.created_at).getTime() - new Date(x.created_at).getTime()
     );
 
     setRows(list);
@@ -375,8 +350,6 @@ function NotificationsPanel({
       }
       return next;
     });
-
-    log("load", { uid, count: list.length });
   }, []);
 
   useEffect(() => {
@@ -404,9 +377,18 @@ function NotificationsPanel({
         const m = metaById[r.id] || {};
         const hasModQtr = Boolean(m.mod) && Boolean(m.qtr);
 
-        const quizId = p?.quiz_id ?? p?.quizId ?? p?.quiz?.id ?? quizIdFromLink(r.link_path, p) ?? null;
+        const quizId =
+          p?.quiz_id ??
+          p?.quizId ??
+          p?.quiz?.id ??
+          quizIdFromLink(r.link_path, p) ??
+          null;
         const assignmentId =
-          p?.assignment_id ?? p?.assignmentId ?? p?.assignment?.id ?? assignmentIdFromLink(r.link_path, p) ?? null;
+          p?.assignment_id ??
+          p?.assignmentId ??
+          p?.assignment?.id ??
+          assignmentIdFromLink(r.link_path, p) ??
+          null;
         const moduleId = p?.module_id ?? p?.moduleId ?? p?.module?.id ?? null;
 
         if (!hasModQtr && quizId) needQuizById.push({ notifId: r.id, quizId });
@@ -431,7 +413,13 @@ function NotificationsPanel({
         const extraModuleIds = Array.from(new Set(needModule.map((x) => x.moduleId)));
 
         let qRowsId:
-          | Array<{ id: string; title: string | null; type: "quiz" | "pre_test" | "post_test" | null; module_id: string | null; created_at: string }>
+          | Array<{
+              id: string;
+              title: string | null;
+              type: "quiz" | "pre_test" | "post_test" | null;
+              module_id: string | null;
+              created_at: string;
+            }>
           | [] = [];
         if (quizIds.length) {
           const { data: qd } = await supabase
@@ -451,7 +439,13 @@ function NotificationsPanel({
         }
 
         let qRowsTime:
-          | Array<{ id: string; title: string | null; type: any; module_id: string | null; created_at: string }>
+          | Array<{
+              id: string;
+              title: string | null;
+              type: any;
+              module_id: string | null;
+              created_at: string;
+            }>
           | [] = [];
         if (needQuizByTime.length) {
           const times = needQuizByTime.map((x) => new Date(x.created_at).getTime());
@@ -477,17 +471,31 @@ function NotificationsPanel({
           ])
         );
 
-        let mRows: Array<{ id: string; title: string | null; quarters?: { name?: string | null } | null }> = [];
+        let mRows: Array<{
+          id: string;
+          title: string | null;
+          quarters?: { name?: string | null } | null;
+        }> = [];
         if (moduleIds.length) {
-          const { data: md } = await supabase.from("modules").select("id,title,quarters(name)").in("id", moduleIds);
+          const { data: md } = await supabase
+            .from("modules")
+            .select("id,title,quarters(name)")
+            .in("id", moduleIds);
           mRows = (md ?? []) as any[];
         }
-        const moduleById: Record<string, { title: string | null; quarterName: string | null }> = {};
+        const moduleById: Record<string, { title: string | null; quarterName: string | null }> =
+          {};
         mRows.forEach((m) => {
-          moduleById[m.id] = { title: m?.title ?? null, quarterName: (m as any)?.quarters?.name ?? null };
+          moduleById[m.id] = {
+            title: m?.title ?? null,
+            quarterName: (m as any)?.quarters?.name ?? null,
+          };
         });
 
-        const quizById: Record<string, { title: string | null; type: any; module_id: string | null; created_at: string }> = {};
+        const quizById: Record<
+          string,
+          { title: string | null; type: any; module_id: string | null; created_at: string }
+        > = {};
         qRowsId.forEach((q) => (quizById[q.id] = q));
 
         const nearestQuizFor = (tsIso: string) => {
@@ -563,12 +571,11 @@ function NotificationsPanel({
 
           return next;
         });
-      } catch (e) {
-        console.warn("[notifications] enrichMissing failed (ok to ignore):", e);
-        log("enrichMissing failed", e as any);
+      } catch {
+        // Ignore enrichment failures to keep UI resilient
       }
     },
-    [metaById, log]
+    [metaById]
   );
 
   useEffect(() => {
@@ -607,7 +614,9 @@ function NotificationsPanel({
     setBusy(true);
     const prev = rows;
     try {
-      setRows((xs) => xs.map((r) => (r.read_at ? r : { ...r, read_at: new Date().toISOString() })));
+      setRows((xs) =>
+        xs.map((r) => (r.read_at ? r : { ...r, read_at: new Date().toISOString() }))
+      );
       const uid = await getUid();
       if (!uid) return;
 
@@ -628,16 +637,15 @@ function NotificationsPanel({
 
       await load();
       dispatchRefresh();
-    } catch (err) {
+    } catch {
       setRows(prev);
-      log("markAllRead failed", err as any);
       dispatchRefresh();
     } finally {
       setBusy(false);
     }
   };
 
-  // CHANGED: hard delete (DELETE) instead of soft-delete
+  // hard delete (DELETE)
   const deleteAll = async () => {
     setBusy(true);
     const prev = rows;
@@ -647,18 +655,15 @@ function NotificationsPanel({
       const uid = await getUid();
       if (!uid) return;
 
-      const [{ error: e1 }, { error: e2 }] = await Promise.all([
+      await Promise.all([
         supabase.from("notifications").delete().eq("recipient_user_id", uid),
         supabase.from("notifications").delete().eq("user_id", uid),
       ]);
 
-      if (e1 || e2) throw e1 || e2;
-
       await load();
       dispatchRefresh();
-    } catch (err) {
+    } catch {
       setRows(prev);
-      log("deleteAll failed", err as any);
       dispatchRefresh();
     } finally {
       setBusy(false);
@@ -667,25 +672,25 @@ function NotificationsPanel({
 
   const markOneRead = async (id: string) => {
     const prev = rows;
-    setRows((xs) => xs.map((r) => (r.id === id && !r.read_at ? { ...r, read_at: new Date().toISOString() } : r)));
+    setRows((xs) =>
+      xs.map((r) => (r.id === id && !r.read_at ? { ...r, read_at: new Date().toISOString() } : r))
+    );
     const call = await supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("id", id);
     if (call.error) {
       setRows(prev);
-      log("markOneRead failed", call.error);
     } else {
       await load();
     }
     dispatchRefresh();
   };
 
-  // CHANGED: hard delete (DELETE) instead of soft-delete
+  // hard delete (DELETE)
   const deleteOne = async (id: string) => {
     const prev = rows;
     setRows((xs) => xs.filter((r) => r.id !== id));
     const { error } = await supabase.from("notifications").delete().eq("id", id);
     if (error) {
       setRows(prev);
-      log("deleteOne failed", error);
     } else {
       await load();
     }
@@ -714,15 +719,6 @@ function NotificationsPanel({
           Delete all
         </button>
 
-        <button
-          onClick={() => setDebugOpen((v) => !v)}
-          className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
-          title="Open notifications debug"
-        >
-          <BugAntIcon className="h-4 w-4" />
-          Debug
-        </button>
-
         <button onClick={onClose} className="rounded-full p-1.5 hover:bg-slate-100" aria-label="Close">
           <XMarkIcon className="h-5 w-5 text-slate-600" />
         </button>
@@ -733,7 +729,7 @@ function NotificationsPanel({
 
   const [viewId, setViewId] = useState<string | null>(null);
   const activeRow = viewId ? rows.find((r) => r.id === viewId) ?? null : null;
-  const activeMeta = viewId ? (metaById[viewId] as MetaPiece) ?? {} : {};
+  const activeMeta = viewId ? ((metaById[viewId] as MetaPiece) ?? {}) : {};
 
   /* ------------------------------ Render ------------------------------ */
   return (
@@ -859,7 +855,9 @@ function NotificationsPanel({
                           </div>
                         )}
 
-                        <div className="mt-1 text-[11px] text-slate-400">{new Date(r.created_at).toLocaleString()}</div>
+                        <div className="mt-1 text-[11px] text-slate-400">
+                          {new Date(r.created_at).toLocaleString()}
+                        </div>
                       </div>
 
                       <div className="justify-self-end">
@@ -893,17 +891,20 @@ function NotificationsPanel({
         </div>
       </div>
 
-      {/* Debug panel (portal) */}
-      {debugOpen && <DebugPanel upstreamLogs={upstreamLogs.current} state={debug} setState={setDebug} onReload={load} />}
-
       {/* Centered confirmation (portal) */}
       {confirmDlg && (
         <PortalCenteredConfirm
-          title={confirmDlg.mode === "all" ? "Delete all notifications?" : "Delete this notification?"}
+          title={
+            confirmDlg.mode === "all"
+              ? "Delete all notifications?"
+              : "Delete this notification?"
+          }
           body={
             confirmDlg.mode === "all"
               ? "This will remove all visible notifications. You can’t undo this."
-              : `You are about to delete “${(confirmDlg as any).title ?? "Notification"}”.`
+              : `You are about to delete “${
+                  (confirmDlg as any).title ?? "Notification"
+                }”.`
           }
           confirmLabel="Delete"
           onCancel={() => setConfirmDlg(null)}
@@ -925,7 +926,11 @@ function NotificationsPanel({
           onMarkRead={() => markOneRead(activeRow.id)}
           onDelete={() => {
             setViewId(null);
-            setConfirmDlg({ mode: "one", id: activeRow.id, title: activeRow.title });
+            setConfirmDlg({
+              mode: "one",
+              id: activeRow.id,
+              title: activeRow.title,
+            });
           }}
         />
       )}
@@ -989,7 +994,10 @@ function PortalCenteredConfirm({
     </div>
   );
 
-  return createPortal(modal, typeof window !== "undefined" ? document.body : ({} as any));
+  return createPortal(
+    modal,
+    typeof window !== "undefined" ? document.body : ({} as any)
+  );
 }
 
 /* -------------------- Notification Details Modal -------------------- */
@@ -1047,7 +1055,11 @@ function NotifDetailsModal({
 
         <div className="px-5 py-4">
           <div className="text-sm font-semibold text-slate-900">{row.title}</div>
-          {row.body && <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap">{row.body}</div>}
+          {row.body && (
+            <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap">
+              {row.body}
+            </div>
+          )}
 
           <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/60">
             <dl className="divide-y divide-slate-100">
@@ -1093,182 +1105,8 @@ function NotifDetailsModal({
     </div>
   );
 
-  return createPortal(modal, typeof window !== "undefined" ? document.body : ({} as any));
-}
-
-/* ------------------------------ Debug UI ----------------------------- */
-function DebugPanel({
-  upstreamLogs,
-  state,
-  setState,
-  onReload,
-}: {
-  upstreamLogs: string[];
-  state: {
-    uid?: string | null;
-    email?: string | null;
-    count_recipient?: number | null;
-    count_user?: number | null;
-    count_visible?: number | null;
-    sample?: any[];
-    logs: string[];
-  };
-  setState: React.Dispatch<React.SetStateAction<typeof state>>;
-  onReload: () => Promise<void>;
-}) {
-  useEffect(() => {
-    (async () => {
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth.user?.id ?? null;
-      const email = (auth.user as any)?.email ?? null;
-
-      if (!uid) return;
-
-      const [{ count: cntRecipient }, { count: cntUser }, { data: visible }] = await Promise.all([
-        supabase.from("notifications").select("id", { count: "exact", head: true }).eq("recipient_user_id", uid).is("deleted_at", null),
-        supabase.from("notifications").select("id", { count: "exact", head: true }).eq("user_id", uid).is("deleted_at", null),
-        supabase
-          .from("notifications")
-          .select("id,type,read_at,deleted_at,recipient_user_id,user_id,created_at")
-          .eq("recipient_user_id", uid)
-          .is("deleted_at", null)
-          .order("created_at", { ascending: false })
-          .limit(10),
-      ]);
-
-      const { data: visibleB } = await supabase
-        .from("notifications")
-        .select("id,type,read_at,deleted_at,recipient_user_id,user_id,created_at")
-        .eq("user_id", uid)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false })
-        .limit(10);
-
-      const merged = [...(visible ?? []), ...(visibleB ?? [])];
-      const uniq = Array.from(new Map(merged.map((r: any) => [r.id, r])).values());
-
-      setState((s) => ({
-        ...s,
-        uid,
-        email,
-        count_recipient: cntRecipient ?? 0,
-        count_user: cntUser ?? 0,
-        count_visible: uniq.length,
-        sample: uniq,
-      }));
-    })();
-  }, [setState]);
-
   return createPortal(
-    <div className="fixed inset-0 z[95] grid place-items-center bg-black/40 p-4">
-      <div className="w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5">
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
-          <div className="flex items-center gap-2">
-            <BugAntIcon className="h-5 w-5 text-indigo-600" />
-            <h3 className="text-base font-semibold text-slate-900">Notifications Debug</h3>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onReload}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-              title="Reload list"
-            >
-              <ArrowPathIcon className="h-4 w-4" />
-              Reload
-            </button>
-            <button
-              onClick={() => setState((s) => ({ ...s, logs: [] }))}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-              title="Clear log"
-            >
-              Clear log
-            </button>
-            <button
-              onClick={() => (document.querySelector("[aria-label='Close']") as HTMLButtonElement)?.click()}
-              className="rounded-full p-1 hover:bg-slate-100"
-              aria-label="Close"
-            >
-              <XMarkIcon className="h-5 w-5 text-slate-600" />
-            </button>
-          </div>
-        </div>
-
-        <div className="grid gap-4 p-5 md:grid-cols-2">
-          <section className="rounded-lg border border-slate-200 p-3">
-            <div className="text-sm font-semibold text-slate-800">Identity</div>
-            <div className="mt-2 text-xs text-slate-600">
-              <div>
-                <span className="font-medium">uid:</span> {state.uid ?? "—"}
-              </div>
-              <div>
-                <span className="font-medium">email:</span> {state.email ?? "—"}
-              </div>
-            </div>
-
-            <div className="mt-3 text-sm font-semibold text-slate-800">Counts (visible)</div>
-            <ul className="mt-1 text-xs text-slate-600">
-              <li>
-                recipient_user_id = uid: <span className="font-medium">{state.count_recipient ?? 0}</span>
-              </li>
-              <li>
-                user_id = uid: <span className="font-medium">{state.count_user ?? 0}</span>
-              </li>
-              <li>
-                loaded in panel: <span className="font-medium">{state.count_visible ?? 0}</span>
-              </li>
-            </ul>
-
-            <div className="mt-3 text-sm font-semibold text-slate-800">Sample (latest 10)</div>
-            <div className="mt-1 max-h-52 overflow-auto rounded border border-slate-100 bg-slate-50 p-2 text-[11px] leading-snug text-slate-700">
-              {state.sample?.length ? (
-                <pre className="whitespace-pre-wrap break-all">{safeJson(state.sample, 2)}</pre>
-              ) : (
-                <div className="text-slate-500">No rows.</div>
-              )}
-            </div>
-          </section>
-
-          <section className="rounded-lg border border-slate-200 p-3">
-            <div className="text-sm font-semibold text-slate-800">Logs</div>
-            <div className="mt-2 grid grid-cols-1 gap-2">
-              <div className="max-h-60 overflow-auto rounded border border-slate-100 bg-slate-50 p-2 text-[11px] leading-snug text-slate-700">
-                {upstreamLogs.length ? (
-                  <>
-                    <div className="mb-1 font-semibold text-slate-600">Bell events</div>
-                    <pre className="whitespace-pre-wrap break-all">{upstreamLogs.join("\n")}</pre>
-                  </>
-                ) : (
-                  <div className="text-slate-500">No bell events yet.</div>
-                )}
-              </div>
-              <div className="max-h-60 overflow-auto rounded border border-slate-100 bg-slate-50 p-2 text-[11px] leading-snug text-slate-700">
-                {state.logs.length ? (
-                  <>
-                    <div className="mb-1 font-semibold text-slate-600">Panel actions</div>
-                    <pre className="whitespace-pre-wrap break-all">{state.logs.join("\n")}</pre>
-                  </>
-                ) : (
-                  <div className="text-slate-500">No panel logs yet.</div>
-                )}
-              </div>
-            </div>
-          </section>
-        </div>
-      </div>
-    </div>,
+    modal,
     typeof window !== "undefined" ? document.body : ({} as any)
   );
-}
-
-/* ------------------------------ Utils -------------------------------- */
-function safeJson(v: any, space = 0) {
-  try {
-    return JSON.stringify(
-      v,
-      (_k, val) => (typeof val === "bigint" ? String(val) : val),
-      space
-    );
-  } catch {
-    return String(v);
-  }
 }
